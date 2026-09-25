@@ -4,8 +4,6 @@ Will the new bed fit? Room Planner is a small app for trying furniture layouts i
 
 It runs in the browser and as a native Mac app.
 
-Inspired by [this post](https://x.com/scheemunai/status/2103059885361598633), where Claude built a one-off planner for a kid's bedroom.
-
 ## What it does
 
 - **Start screen.** The app opens with "Start a new room" and "Open an existing room". A new room starts with the basics (door, window, bed, dresser, rug, desk), empty, or as a copy of the example room. Two rooms are seeded on first launch: the example bedroom and a nursery measured in inches.
