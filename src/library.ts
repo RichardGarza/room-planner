@@ -1,9 +1,12 @@
 import { create } from 'zustand'
+import { findPreset } from './catalog'
 import { defaultItems, defaultRoom, makeEmptyRoom, presetLayouts } from './data'
+import { doorClearance, doorwayRect, intersects, isRugKind, rectOf } from './geometry'
 import { migrateDoc } from './migrate'
+import { findFreeSpot, type PlacementOptions, type Spot } from './placement'
 import { getStorage, summarize, type RoomStorage } from './storage'
 import { useStore } from './store'
-import type { Door, Item, Opening, Room, RoomDoc, RoomSummary } from './types'
+import type { CatalogEntry, Door, Item, Opening, Room, RoomDoc, RoomSummary } from './types'
 
 /*
  * The room library: a list of saved room documents (one per real room or
@@ -12,13 +15,21 @@ import type { Door, Item, Opening, Room, RoomDoc, RoomSummary } from './types'
 
 export type LibraryStatus = 'idle' | 'loading' | 'saved' | 'saving' | 'dirty' | 'error'
 
+/** What a new room starts with: starter furniture, nothing, or a copy of the example room. */
+export type StartWith = 'basics' | 'empty' | 'example'
+
 export interface CreateInput {
   name: string
   group?: string
   w?: number
   d?: number
   h?: number
-  /** start from Mila's example room instead of an empty one */
+  /**
+   * 'basics' (default): the shell plus a bed, dresser, desk and rug from the catalogue;
+   * 'empty': just the shell with its window and door; 'example': a copy of Mila's room.
+   */
+  start?: StartWith
+  /** older alias for start: 'example' */
   fromExample?: boolean
 }
 
@@ -94,8 +105,61 @@ export function exampleDoc(name = defaultRoom.name, group = 'Examples'): RoomDoc
   })!
 }
 
-function emptyDoc(input: CreateInput): RoomDoc {
+/* ---------- starter furniture ---------- */
+
+/** Catalogue presets by id, in the given order, skipping any id that does not exist. */
+const presets = (ids: string[]) => ids.map(findPreset).filter((p): p is CatalogEntry => p !== undefined)
+
+function itemFrom(p: CatalogEntry, key: string, spot: Spot): Item {
+  const item: Item = {
+    id: `item-${key}-1`, name: p.name, kind: p.kind, w: p.w, d: p.d, h: p.h,
+    x: spot.x, y: spot.y, rot: spot.rot, color: p.color, inRoom: true,
+  }
+  return p.note ? { ...item, note: p.note } : item
+}
+
+/** True when the piece lies inside the room, clear of the door and of every solid item already placed. */
+function fitsAt(room: Room, items: Item[], item: Item): boolean {
+  const r = rectOf(item)
+  if (r.x0 < -0.01 || r.y0 < -0.01 || r.x1 > room.w + 0.01 || r.y1 > room.d + 0.01) return false
+  if (items.some((o) => o.inRoom && !isRugKind(o.kind) && intersects(r, rectOf(o)))) return false
+  if (isRugKind(item.kind)) return true
+  return doorClearance(room, [item]).maxAngle === 90 && !room.doors.some((door) => intersects(r, doorwayRect(room, door)))
+}
+
+/** Touches one of the four walls. */
+function againstWall(room: Room, item: Item): boolean {
+  const r = rectOf(item)
+  return r.x0 <= 0.5 || r.y0 <= 0.5 || r.x1 >= room.w - 0.5 || r.y1 >= room.d - 0.5
+}
+
+/**
+ * "The basics" for a fresh room: a double bed, a wide dresser, a desk and a round rug from the
+ * catalogue, each dropped on a free spot in that order (the rug last, working out from the
+ * middle). A piece that does not fit is swapped for a smaller one or left out. The ids are
+ * fresh (item-bed-1, …) so the example room's preset layouts never apply to these.
+ */
+export function starterItems(room: Room): Item[] {
+  const items: Item[] = []
+  const place = (key: string, candidates: CatalogEntry[], opts: PlacementOptions = {}) => {
+    const fitting = candidates
+      .map((p) => itemFrom(p, key, findFreeSpot(room, items, p.w, p.d, { h: p.h, ...opts })))
+      .filter((it) => fitsAt(room, items, it))
+    // a bed, dresser or desk belongs against a wall: the biggest that gets one, else the biggest that fits at all
+    const pick = opts.prefer === 'centre' ? fitting[0] : (fitting.find((it) => againstWall(room, it)) ?? fitting[0])
+    if (pick) items.push(pick)
+  }
+  place('bed', presets(['double-bed', 'single-bed-frame']))
+  place('dresser', presets(['dresser-wide-6', 'dresser-short-3', 'chest-tall']))
+  place('desk', presets(['desk-small', 'desk-kids']))
+  place('rug', presets([room.w < 250 ? 'rug-round-120' : 'rug-round-160']), { prefer: 'centre' })
+  return items
+}
+
+/** A new room of the given size: the shell, plus the starter furniture unless it should stay empty. */
+function freshDoc(input: CreateInput, start: StartWith): RoomDoc {
   const ts = now()
+  const room = makeEmptyRoom(input.name, input.w ?? 300, input.d ?? 400, input.h ?? 260)
   return migrateDoc({
     id: newId(),
     name: input.name,
@@ -103,8 +167,8 @@ function emptyDoc(input: CreateInput): RoomDoc {
     notes: '',
     createdAt: ts,
     updatedAt: ts,
-    room: makeEmptyRoom(input.name, input.w ?? 300, input.d ?? 400, input.h ?? 260),
-    items: [],
+    room,
+    items: start === 'basics' ? starterItems(room) : [],
     layouts: [],
   })!
 }
@@ -317,7 +381,9 @@ export const useLibrary = create<LibraryState>((set, get) => {
 
     create: async (input) => {
       const name = input.name.trim() || 'Untitled room'
-      const doc = input.fromExample ? exampleDoc(name, input.group?.trim() ?? '') : emptyDoc({ ...input, name, group: input.group?.trim() ?? '' })
+      const group = input.group?.trim() ?? ''
+      const start: StartWith = input.start ?? (input.fromExample ? 'example' : 'basics')
+      const doc = start === 'example' ? exampleDoc(name, group) : freshDoc({ ...input, name, group }, start)
       await get().close()
       try {
         const s = await storage()

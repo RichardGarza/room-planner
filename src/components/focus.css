@@ -1,0 +1,32 @@
+/* Adjustable 2D/3D focus: the plan | scene split with its draggable divider, and the Focus toggle. */
+
+.split { display: flex; align-items: stretch; min-width: 0; min-height: 0; }
+.split.dragging { cursor: col-resize; user-select: none; }
+.split-a { flex: 0 0 auto; min-width: 260px; max-width: calc(100% - 372px); }
+.split:not(.dragging) .split-a { transition: width 0.25s ease; }
+.split-b { flex: 1 1 0; min-width: 0; container-type: inline-size; }
+/* with the plan in focus the scene pane gets narrow: stack the day/evening pill under the view controls */
+@container (max-width: 520px) {
+  .scene-pane .daynight { top: 84px; left: 10px; right: auto; }
+}
+
+.split-divider { flex: 0 0 8px; margin: 0 2px; border-radius: 4px; cursor: col-resize; display: grid; place-items: center; touch-action: none; outline: none; }
+.split-divider:hover, .split-divider:focus-visible, .split.dragging .split-divider { background: var(--pink-soft); }
+.split-handle { width: 5px; height: 48px; border-radius: 999px; background: #c8bfb5; transition: background 0.15s, height 0.15s; }
+.split-divider:hover .split-handle, .split-divider:focus-visible .split-handle, .split.dragging .split-handle { background: var(--pink); height: 72px; }
+/* the plan pane can be narrower than before: keep the selected-item toolbar on one line */
+.plan-pane .item-toolbar { white-space: nowrap; }
+
+/* Focus 2D / 3D toggle in the plan pane header */
+.focus-seg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 999px; background: #f1ece6; flex: none; }
+.focus-seg .focus-label { font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 0 5px 0 8px; }
+.focus-seg button { padding: 3px 9px; border-radius: 999px; font-weight: 800; font-size: 11px; color: var(--muted); }
+.focus-seg button:hover { color: var(--ink); }
+.focus-seg button.on { background: #2f2a26; color: #fff; }
+
+@media (max-width: 860px) {
+  .split { flex-direction: column; gap: 12px; }
+  .split-a { width: auto !important; min-width: 0; max-width: none; min-height: 360px; transition: none; }
+  .split-b { flex: 1 1 auto; min-height: 360px; }
+  .split-divider { display: none; }
+}
