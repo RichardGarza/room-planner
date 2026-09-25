@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { FloorPlan } from './components/FloorPlan'
 import { Library } from './components/Library'
+import { PrintDialog, usePrintDialog } from './components/PrintDialog'
 import { Scene3D } from './components/Scene3D'
 import { Sidebar } from './components/Sidebar'
 import { SplitPane, useSplit } from './components/SplitPane'
@@ -30,6 +31,12 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         void useLibrary.getState().saveNow()
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        // print the plan, not the app window
+        e.preventDefault()
+        usePrintDialog.getState().setOpen(true)
         return
       }
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
@@ -71,6 +78,7 @@ function Planner() {
   const toggleInRoom = useStore((s) => s.toggleInRoom)
   const focus = useSplit((s) => s.focus)
   const setFocus = useSplit((s) => s.setFocus)
+  const openPrint = usePrintDialog((s) => s.setOpen)
 
   const plan = (
     <>
@@ -79,10 +87,13 @@ function Planner() {
           <h4>Floor plan</h4>
           <span className="legend">drag items · R rotates · drop below the room to remove</span>
         </div>
-        <div className="focus-seg" role="group" aria-label="Focus">
-          <span className="focus-label">Focus</span>
-          <button className={focus === '2d' ? 'on' : ''} aria-label="Focus 2D" aria-pressed={focus === '2d'} title="Bigger floor plan (F)" onClick={() => setFocus('2d')}>2D</button>
-          <button className={focus === '3d' ? 'on' : ''} aria-label="Focus 3D" aria-pressed={focus === '3d'} title="Bigger 3D view (F)" onClick={() => setFocus('3d')}>3D</button>
+        <div className="pane-tools">
+          <button className="print-btn" title="Print the plan or save it as a PDF (⌘P)" onClick={() => openPrint(true)}>⎙ Print / PDF</button>
+          <div className="focus-seg" role="group" aria-label="Focus">
+            <span className="focus-label">Focus</span>
+            <button className={focus === '2d' ? 'on' : ''} aria-label="Focus 2D" aria-pressed={focus === '2d'} title="Bigger floor plan (F)" onClick={() => setFocus('2d')}>2D</button>
+            <button className={focus === '3d' ? 'on' : ''} aria-label="Focus 3D" aria-pressed={focus === '3d'} title="Bigger 3D view (F)" onClick={() => setFocus('3d')}>3D</button>
+          </div>
         </div>
       </div>
       <FloorPlan />
@@ -134,6 +145,7 @@ function Planner() {
         <SplitPane leftClassName="pane plan-pane" rightClassName="pane scene-pane" left={plan} right={scene} />
         <Sidebar />
       </main>
+      <PrintDialog />
     </div>
   )
 }
