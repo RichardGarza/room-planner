@@ -155,7 +155,7 @@ describe('migrateDoc validation', () => {
     expect(typeof doc.createdAt).toBe('string')
     expect(Number.isNaN(Date.parse(doc.createdAt))).toBe(false)
     expect(typeof doc.updatedAt).toBe('string')
-    expect(doc.settings).toEqual({ daytime: true, doorAngle: 90, blinds: 0, bedding: true, walkHeight: 'adult', quality: 'fast' })
+    expect(doc.settings).toEqual({ daytime: true, doorAngle: 90, blinds: 0, bedding: true, walkHeight: 'adult', quality: 'fast', lookSensitivity: 1 })
     const kept = migrateDoc({ id: 'k', name: 'K', group: 'G', notes: 'N', createdAt: 'c', updatedAt: 'u', room: legacy, items: [] })!
     expect(kept).toMatchObject({ id: 'k', name: 'K', group: 'G', notes: 'N', createdAt: 'c', updatedAt: 'u' })
   })

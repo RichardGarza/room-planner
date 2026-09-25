@@ -45,11 +45,11 @@ const FRONT: Record<0 | 90 | 180 | 270, [number, number]> = { 0: [0, 1], 90: [-1
 const WALL_NAME: Record<Wall, string> = { top: 'back wall', bottom: 'front wall', left: 'left wall', right: 'right wall' }
 const KIND_LABEL: Record<ItemKind, string> = {
   bed: 'bed', chair: 'chair', desk: 'desk', shelf: 'shelf', dresser: 'dresser', wardrobe: 'wardrobe', bookcase: 'bookcase',
-  rug: 'rug', rugRect: 'rug', nightstand: 'nightstand', sofa: 'sofa', table: 'table', box: 'piece',
+  rug: 'rug', rugRect: 'rug', nightstand: 'nightstand', sofa: 'sofa', table: 'table', plant: 'plant', box: 'piece',
 }
 /** Placement priority of everything but the anchor (lower first). Chairs follow their desk. */
 const PRIORITY: Record<ItemKind, number> = {
-  wardrobe: 0, dresser: 1, desk: 2, bookcase: 3, shelf: 3, nightstand: 4, sofa: 5, table: 5, box: 6, bed: 6, chair: 7, rug: 9, rugRect: 9,
+  wardrobe: 0, dresser: 1, desk: 2, bookcase: 3, shelf: 3, nightstand: 4, sofa: 5, table: 5, box: 6, bed: 6, chair: 7, plant: 8, rug: 9, rugRect: 9,
 }
 /** Space kept clear in front of a piece (doors, drawers, a chair) and how much a spot loses by taking it. */
 const FRONT_ZONE: Partial<Record<ItemKind, { depth: number; penalty: number; allow?: ItemKind[] }>> = {
