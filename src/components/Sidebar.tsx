@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ItemKind, Room, Wall } from '../types'
+import type { Door, ItemKind, Opening, Radiator, Wall } from '../types'
 import { runChecks } from '../checks'
 import { presetLayouts } from '../data'
 import { footprint, rectOf } from '../geometry'
@@ -185,12 +185,109 @@ function AddFurniture() {
   )
 }
 
+const n = (v: string, fallback: number) => (v === '' ? fallback : +v)
+
+/** Header line for one window / door / radiator row, with its remove button. */
+function OpeningHead({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <h5 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {label}
+      <button className="x" onClick={onRemove} title={`Remove ${label.toLowerCase()}`} aria-label={`Remove ${label.toLowerCase()}`}>×</button>
+    </h5>
+  )
+}
+
+function WallSelect({ value, onChange }: { value: Wall; onChange: (w: Wall) => void }) {
+  return (
+    <label>
+      Wall
+      <select value={value} onChange={(e) => onChange(e.target.value as Wall)}>
+        {WALLS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+      </select>
+    </label>
+  )
+}
+
+function WindowRows() {
+  const windows = useStore((s) => s.room.windows)
+  const updateOpening = useStore((s) => s.updateOpening)
+  const removeOpening = useStore((s) => s.removeOpening)
+  return (
+    <>
+      {windows.map((w, i) => {
+        const patch = (p: Partial<Opening>) => updateOpening('window', w.id, p)
+        return (
+          <div key={w.id}>
+            <OpeningHead label={windows.length > 1 ? `Window ${i + 1}` : 'Window'} onRemove={() => removeOpening('window', w.id)} />
+            <div className="dims-grid four">
+              <WallSelect value={w.wall} onChange={(wall) => patch({ wall })} />
+              <label>From corner<input type="number" value={w.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, w.offset) })} /></label>
+              <label>Width<input type="number" value={w.width} min={30} onChange={(e) => patch({ width: n(e.target.value, w.width) })} /></label>
+              <label>Height<input type="number" value={w.height} min={30} onChange={(e) => patch({ height: n(e.target.value, w.height) })} /></label>
+              <label>Sill height<input type="number" value={w.sill} min={0} onChange={(e) => patch({ sill: n(e.target.value, w.sill) })} /></label>
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+function DoorRows() {
+  const doors = useStore((s) => s.room.doors)
+  const updateOpening = useStore((s) => s.updateOpening)
+  const removeOpening = useStore((s) => s.removeOpening)
+  return (
+    <>
+      {doors.map((d, i) => {
+        const patch = (p: Partial<Door>) => updateOpening('door', d.id, p)
+        return (
+          <div key={d.id}>
+            <OpeningHead label={doors.length > 1 ? `Door ${i + 1}` : 'Door'} onRemove={() => removeOpening('door', d.id)} />
+            <div className="dims-grid four">
+              <WallSelect value={d.wall} onChange={(wall) => patch({ wall })} />
+              <label>From corner<input type="number" value={d.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, d.offset) })} /></label>
+              <label>Width<input type="number" value={d.width} min={30} onChange={(e) => patch({ width: n(e.target.value, d.width) })} /></label>
+              <label>Height<input type="number" value={d.height} min={150} onChange={(e) => patch({ height: n(e.target.value, d.height) })} /></label>
+              <label>Hinge<select value={d.hinge} onChange={(e) => patch({ hinge: e.target.value as Door['hinge'] })}><option value="left">Near corner</option><option value="right">Far corner</option></select></label>
+              <label>Swing<select value={d.swing} onChange={(e) => patch({ swing: e.target.value as Door['swing'] })}><option value="in">Into the room</option><option value="out">Out of the room</option></select></label>
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+function RadiatorRows() {
+  const radiators = useStore((s) => s.room.radiators)
+  const updateOpening = useStore((s) => s.updateOpening)
+  const removeOpening = useStore((s) => s.removeOpening)
+  return (
+    <>
+      {radiators.map((r, i) => {
+        const patch = (p: Partial<Radiator>) => updateOpening('radiator', r.id, p)
+        return (
+          <div key={r.id}>
+            <OpeningHead label={radiators.length > 1 ? `Radiator ${i + 1}` : 'Radiator'} onRemove={() => removeOpening('radiator', r.id)} />
+            <div className="dims-grid four">
+              <WallSelect value={r.wall} onChange={(wall) => patch({ wall })} />
+              <label>From corner<input type="number" value={r.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, r.offset) })} /></label>
+              <label>Width<input type="number" value={r.width} min={20} onChange={(e) => patch({ width: n(e.target.value, r.width) })} /></label>
+              <label>Height<input type="number" value={r.height} min={20} onChange={(e) => patch({ height: n(e.target.value, r.height) })} /></label>
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 function RoomCard() {
   const room = useStore((s) => s.room)
   const setRoom = useStore((s) => s.setRoom)
+  const addOpening = useStore((s) => s.addOpening)
   const [open, setOpen] = useState(false)
-  const n = (v: string, fallback: number) => (v === '' ? fallback : +v)
-  const patchOpening = <K extends 'window' | 'door' | 'radiator'>(key: K, patch: Partial<Room[K]>) => setRoom({ [key]: { ...room[key], ...patch } } as Partial<Room>)
   return (
     <section className="card">
       <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
@@ -213,32 +310,21 @@ function RoomCard() {
           </div>
           <p className="muted small">Width runs left to right on the plan, depth from the back wall to the front wall.</p>
 
-          <h5>Window</h5>
-          <div className="dims-grid four">
-            <label>Wall<select value={room.window.wall} onChange={(e) => patchOpening('window', { wall: e.target.value as Wall })}>{WALLS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}</select></label>
-            <label>From corner<input type="number" value={room.window.offset} min={0} onChange={(e) => patchOpening('window', { offset: n(e.target.value, room.window.offset) })} /></label>
-            <label>Width<input type="number" value={room.window.width} min={30} onChange={(e) => patchOpening('window', { width: n(e.target.value, room.window.width) })} /></label>
-            <label>Height<input type="number" value={room.window.height} min={30} onChange={(e) => patchOpening('window', { height: n(e.target.value, room.window.height) })} /></label>
-            <label>Sill height<input type="number" value={room.window.sill} min={0} onChange={(e) => patchOpening('window', { sill: n(e.target.value, room.window.sill) })} /></label>
-          </div>
+          <h5>Windows</h5>
+          {room.windows.length === 0 && <p className="muted small">No windows.</p>}
+          <WindowRows />
+          <div className="row"><button className="chip ghost" onClick={() => addOpening('window')}>+ Add window</button></div>
 
-          <h5>Door</h5>
-          <div className="dims-grid four">
-            <label>Wall<select value={room.door.wall} onChange={(e) => patchOpening('door', { wall: e.target.value as Wall })}>{WALLS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}</select></label>
-            <label>From corner<input type="number" value={room.door.offset} min={0} onChange={(e) => patchOpening('door', { offset: n(e.target.value, room.door.offset) })} /></label>
-            <label>Width<input type="number" value={room.door.width} min={30} onChange={(e) => patchOpening('door', { width: n(e.target.value, room.door.width) })} /></label>
-            <label>Height<input type="number" value={room.door.height} min={150} onChange={(e) => patchOpening('door', { height: n(e.target.value, room.door.height) })} /></label>
-            <label>Hinge<select value={room.door.hinge} onChange={(e) => patchOpening('door', { hinge: e.target.value as 'left' | 'right' })}><option value="left">Near corner</option><option value="right">Far corner</option></select></label>
-          </div>
-          <p className="muted small">"From corner" is measured from the left end of a back or front wall, or from the back end of a side wall.</p>
+          <h5>Doors</h5>
+          {room.doors.length === 0 && <p className="muted small">No doors.</p>}
+          <DoorRows />
+          <div className="row"><button className="chip ghost" onClick={() => addOpening('door')}>+ Add door</button></div>
+          <p className="muted small">"From corner" is measured from the left end of a back or front wall, or from the back end of a side wall. "Near corner" puts the hinge at that end.</p>
 
-          <h5>Radiator</h5>
-          <div className="dims-grid four">
-            <label>Wall<select value={room.radiator.wall} onChange={(e) => patchOpening('radiator', { wall: e.target.value as Wall })}>{WALLS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}</select></label>
-            <label>From corner<input type="number" value={room.radiator.offset} min={0} onChange={(e) => patchOpening('radiator', { offset: n(e.target.value, room.radiator.offset) })} /></label>
-            <label>Width<input type="number" value={room.radiator.width} min={0} onChange={(e) => patchOpening('radiator', { width: n(e.target.value, room.radiator.width) })} /></label>
-            <label>Height<input type="number" value={room.radiator.height} min={0} onChange={(e) => patchOpening('radiator', { height: n(e.target.value, room.radiator.height) })} /></label>
-          </div>
+          <h5>Radiators</h5>
+          {room.radiators.length === 0 && <p className="muted small">No radiators.</p>}
+          <RadiatorRows />
+          <div className="row"><button className="chip ghost" onClick={() => addOpening('radiator')}>+ Add radiator</button></div>
 
           <h5>Colours</h5>
           <div className="colors">

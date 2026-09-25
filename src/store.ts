@@ -1,13 +1,18 @@
 import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
 import { clamp, footprint, wallLength } from './geometry'
-import type { Item, ItemPlacement, Layout, Room, Rot } from './types'
+import { migrateRoom, nextOpeningId } from './migrate'
+import type { Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, Rot, Wall } from './types'
 
 export type ViewMode = 'outside' | 'walk'
 export type OutsideAngle = 'corner' | 'above' | 'window' | 'door'
 export type WalkPreset = 'door' | 'window'
 
 export interface WalkPose { x: number; y: number; yaw: number; pitch: number }
+
+export type OpeningKind = 'window' | 'door' | 'radiator'
+type OpeningOf<K extends OpeningKind> = K extends 'window' ? Opening : K extends 'door' ? Door : Radiator
+const LIST_KEY = { window: 'windows', door: 'doors', radiator: 'radiators' } as const
 
 interface Settings {
   daytime: boolean
@@ -54,6 +59,10 @@ interface State extends Settings {
   removeItem: (id: string) => void
   toggleInRoom: (id: string) => void
   setRoom: (patch: Partial<Room>) => void
+  /** Adds a window / door / radiator with sensible defaults on a wall with free space; returns its id. */
+  addOpening: (kind: OpeningKind) => string
+  updateOpening: <K extends OpeningKind>(kind: K, id: string, patch: Partial<OpeningOf<K>>) => void
+  removeOpening: (kind: OpeningKind, id: string) => void
   applyLayout: (layout: Layout) => void
   saveLayout: (name: string) => void
   deleteLayout: (id: string) => void
@@ -113,34 +122,93 @@ function fitAll(room: Room, items: Item[]): Item[] {
   return park(room, items.map((i) => (i.inRoom ? { ...i, ...clampToRoom(room, i, i.x, i.y) } : i)))
 }
 
-/** Keep openings on their wall after the room or the opening changes. */
-function sanitizeRoom(room: Room): Room {
+/** Keep every opening on its wall and within the room height after the room or the opening changes. */
+export function sanitizeRoom(room: Room): Room {
   const w = clamp(Math.round(room.w), 150, 1200)
   const d = clamp(Math.round(room.d), 150, 1200)
   const h = clamp(Math.round(room.h), 200, 400)
   const r = { ...room, w, d, h }
-  const fixOpening = <T extends { wall: Room['window']['wall']; offset: number; width: number }>(o: T): T => {
+  const fixOpening = <T extends { wall: Wall; offset: number; width: number }>(o: T, minWidth: number): T => {
     const len = wallLength(r, o.wall)
-    const width = clamp(Math.round(o.width), 30, len)
+    const width = clamp(Math.round(o.width), Math.min(minWidth, len), len)
     return { ...o, width, offset: clamp(Math.round(o.offset), 0, len - width) }
   }
-  const window = fixOpening(r.window)
-  const winH = clamp(Math.round(window.height), 30, h - 10)
-  const door = fixOpening(r.door)
-  return {
-    ...r,
-    window: { ...window, height: winH, sill: clamp(Math.round(window.sill), 0, h - winH) },
-    door: { ...door, height: clamp(Math.round(door.height), 150, h - 5), sill: 0 },
-    radiator: fixOpening(r.radiator),
+  const windows = (r.windows ?? []).map((o) => {
+    const win = fixOpening(o, 30)
+    const height = clamp(Math.round(win.height), 30, h - 10)
+    return { ...win, height, sill: clamp(Math.round(win.sill), 0, h - height) }
+  })
+  const doors = (r.doors ?? []).map((o) => {
+    const door = fixOpening(o, 30)
+    return { ...door, height: clamp(Math.round(door.height), 150, h - 5), sill: 0, swing: door.swing === 'out' ? 'out' as const : 'in' as const }
+  })
+  const radiators = (r.radiators ?? []).map((o) => {
+    const rad = fixOpening(o, 20)
+    return { ...rad, depth: clamp(Math.round(rad.depth), 4, 40), height: clamp(Math.round(rad.height), 20, h - 10) }
+  })
+  return { ...r, windows, doors, radiators }
+}
+
+/* ---------- placing new openings ---------- */
+
+const NEW_OPENING = {
+  window: { width: 100, height: 120, sill: 90 },
+  door: { width: 80, height: 205 },
+  radiator: { width: 80, depth: 10, height: 60 },
+} as const
+
+/** Everything already occupying a wall, as spans along it. Radiators may sit under windows. */
+function occupied(room: Room, wall: Wall, kind: OpeningKind): { offset: number; width: number }[] {
+  const list: { wall: Wall; offset: number; width: number }[] = kind === 'radiator' ? [...room.doors, ...room.radiators] : [...room.windows, ...room.doors, ...room.radiators]
+  return list.filter((o) => o.wall === wall).sort((a, b) => a.offset - b.offset)
+}
+
+/** Centre of the widest free stretch on a wall that fits `width` (+ margins), or null. */
+function freeSpot(room: Room, wall: Wall, kind: OpeningKind, width: number): number | null {
+  const len = wallLength(room, wall)
+  const margin = 10
+  let cursor = 0
+  let best: { start: number; size: number } | null = null
+  const consider = (start: number, end: number) => {
+    const size = end - start
+    if (size >= width + margin * 2 && (!best || size > best.size)) best = { start, size }
+  }
+  for (const o of occupied(room, wall, kind)) {
+    consider(cursor, o.offset)
+    cursor = Math.max(cursor, o.offset + o.width)
+  }
+  consider(cursor, len)
+  if (!best) return null
+  const b: { start: number; size: number } = best
+  return Math.round(b.start + (b.size - width) / 2)
+}
+
+function makeOpening(room: Room, kind: OpeningKind): Opening | Door | Radiator {
+  const preferred: Wall[] = kind === 'door' ? ['bottom', 'left', 'right', 'top'] : ['top', 'left', 'right', 'bottom']
+  const width = NEW_OPENING[kind].width
+  let wall = preferred[0]
+  let offset = 0
+  for (const w of preferred) {
+    const spot = freeSpot(room, w, kind, width)
+    if (spot !== null) { wall = w; offset = spot; break }
+  }
+  switch (kind) {
+    case 'window':
+      return { id: nextOpeningId('w', room.windows), wall, offset, width, height: NEW_OPENING.window.height, sill: NEW_OPENING.window.sill }
+    case 'door':
+      return { id: nextOpeningId('d', room.doors), wall, offset, width, height: NEW_OPENING.door.height, sill: 0, hinge: 'left', swing: 'in' }
+    case 'radiator':
+      return { id: nextOpeningId('r', room.radiators), wall, offset, width, depth: NEW_OPENING.radiator.depth, height: NEW_OPENING.radiator.height }
   }
 }
 
 function walkStart(room: Room, preset: WalkPreset): WalkPose {
   // stand just inside the opening, facing away from it
-  const o = preset === 'door' ? room.door : room.window
+  const o = preset === 'door' ? room.doors[0] : room.windows[0]
+  if (!o) return { x: room.w / 2, y: room.d / 2, yaw: 0, pitch: -0.05 }
   const t = o.offset + o.width / 2
-  // stand past the swing of the door leaf so it is not filling the view
-  const inset = preset === 'door' ? Math.min(o.width + 20, room.d / 3) : 45
+  // stand past the swing of an inward door leaf so it is not filling the view
+  const inset = preset === 'door' && (o as Door).swing !== 'out' ? Math.min(o.width + 20, room.d / 3) : 45
   switch (o.wall) {
     case 'top': return { x: t, y: inset, yaw: Math.PI, pitch: -0.05 }
     case 'bottom': return { x: t, y: room.d - inset, yaw: 0, pitch: -0.05 }
@@ -158,7 +226,7 @@ function readHash(): Shared | null {
     if (!h) return null
     const parsed = JSON.parse(decodeURIComponent(atob(h))) as Shared
     if (!parsed.room || !Array.isArray(parsed.items)) return null
-    return parsed
+    return { ...parsed, room: migrateRoom(parsed.room) }
   } catch {
     return null
   }
@@ -168,7 +236,7 @@ function initialState(): { room: Room; items: Item[]; layoutId: string | null; s
   const shared = readHash()
   const A = presetLayouts[0]
   if (!shared) return { room: defaultRoom, items: park(defaultRoom, applyPlacements(defaultItems, A.placements)), layoutId: A.id, settings: {} }
-  const room = sanitizeRoom({ ...defaultRoom, ...shared.room })
+  const room = sanitizeRoom(shared.room)
   return { room, items: fitAll(room, shared.items), layoutId: null, settings: shared.s ?? {} }
 }
 
@@ -284,6 +352,29 @@ export const useStore = create<State>((set, get) => ({
       const room = sanitizeRoom({ ...s.room, ...patch })
       return { room, items: fitAll(room, s.items), activeLayoutId: null, walkPose: walkStart(room, 'door') }
     }),
+
+  addOpening: (kind) => {
+    const s = get()
+    const opening = makeOpening(s.room, kind)
+    const key = LIST_KEY[kind]
+    const list = [...(s.room[key] as { id: string }[]), opening]
+    s.setRoom({ [key]: list } as Partial<Room>)
+    return opening.id
+  },
+
+  updateOpening: (kind, id, patch) => {
+    const s = get()
+    const key = LIST_KEY[kind]
+    const list = (s.room[key] as { id: string }[]).map((o) => (o.id === id ? { ...o, ...patch } : o))
+    s.setRoom({ [key]: list } as Partial<Room>)
+  },
+
+  removeOpening: (kind, id) => {
+    const s = get()
+    const key = LIST_KEY[kind]
+    const list = (s.room[key] as { id: string }[]).filter((o) => o.id !== id)
+    s.setRoom({ [key]: list } as Partial<Room>)
+  },
 
   applyLayout: (layout) =>
     set((s) => ({

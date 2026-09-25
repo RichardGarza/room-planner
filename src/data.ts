@@ -6,9 +6,9 @@ export const defaultRoom: Room = {
   w: 270,
   d: 370,
   h: 260,
-  window: { wall: 'top', offset: 60, width: 150, height: 130, sill: 90 },
-  door: { wall: 'bottom', offset: 85, width: 80, height: 205, sill: 0, hinge: 'right' },
-  radiator: { wall: 'top', offset: 75, width: 120, depth: 10, height: 60 },
+  windows: [{ id: 'w1', wall: 'top', offset: 60, width: 150, height: 130, sill: 90 }],
+  doors: [{ id: 'd1', wall: 'bottom', offset: 85, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
+  radiators: [{ id: 'r1', wall: 'top', offset: 75, width: 120, depth: 10, height: 60 }],
   wallColors: { left: '#e9c2d3', right: '#e9c2d3', top: '#f1ece6', bottom: '#f1ece6' },
   floorColor: '#8a4a34',
 }
@@ -23,9 +23,9 @@ export function makeEmptyRoom(name: string, w = 300, d = 400, h = 260): Room {
     w,
     d,
     h,
-    window: { wall: 'top', offset: Math.round((w - winW) / 2), width: winW, height: 120, sill: 90 },
-    door: { wall: 'bottom', offset: 20, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' },
-    radiator: { wall: 'top', offset: Math.round((w - winW) / 2), width: 0, depth: 10, height: 60 },
+    windows: [{ id: 'w1', wall: 'top', offset: Math.round((w - winW) / 2), width: winW, height: 120, sill: 90 }],
+    doors: [{ id: 'd1', wall: 'bottom', offset: 20, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
+    radiators: [],
   }
 }
 
