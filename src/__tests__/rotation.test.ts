@@ -242,7 +242,7 @@ describe('placement respects turned items', () => {
     expect(spot.x).toBeGreaterThanOrEqual(20)
     expect(spot.y).toBeGreaterThanOrEqual(20)
     // the room's first candidate, the top-left corner, is only free because the diamond does not reach it
-    expect(spot).toEqual({ x: 20, y: 20, rot: 0 })
+    expect(spot).toEqual({ x: 20, y: 20, rot: 0, fits: true })
   })
 })
 
