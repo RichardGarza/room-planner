@@ -25,6 +25,7 @@ export interface NewItemSpec {
   d: number
   h: number
   color: string
+  note?: string
 }
 
 interface State extends Settings {
@@ -48,7 +49,8 @@ interface State extends Settings {
   rotateItem: (id: string, delta: 90 | -90 | 180) => void
   resizeItem: (id: string, size: Partial<Pick<Item, 'w' | 'd' | 'h'>>) => void
   updateItem: (id: string, patch: Partial<Pick<Item, 'name' | 'color' | 'kind' | 'note'>>) => void
-  addItem: (spec: NewItemSpec) => void
+  /** Adds an item (at the given centre, else the room centre) and returns its id. */
+  addItem: (spec: NewItemSpec, at?: { x: number; y: number }) => string
   removeItem: (id: string) => void
   toggleInRoom: (id: string) => void
   setRoom: (patch: Partial<Room>) => void
@@ -240,9 +242,9 @@ export const useStore = create<State>((set, get) => ({
   updateItem: (id, patch) =>
     set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, ...patch } : i)), activeLayoutId: null, ...pushHistory(s) })),
 
-  addItem: (spec) =>
+  addItem: (spec, at) => {
+    const id = `item-${Math.random().toString(36).slice(2, 8)}`
     set((s) => {
-      const id = `item-${Date.now().toString(36)}`
       const item: Item = {
         id,
         name: spec.name.trim() || 'New item',
@@ -250,15 +252,18 @@ export const useStore = create<State>((set, get) => ({
         w: clamp(Math.round(spec.w) || 60, 5, 600),
         d: clamp(Math.round(spec.d) || 60, 5, 600),
         h: clamp(Math.round(spec.h) || 60, 1, 400),
-        x: s.room.w / 2,
-        y: s.room.d / 2,
+        x: at?.x ?? s.room.w / 2,
+        y: at?.y ?? s.room.d / 2,
         rot: 0,
         color: spec.color,
         inRoom: true,
+        note: spec.note,
       }
       const placed = { ...item, ...clampToRoom(s.room, item, item.x, item.y) }
       return { items: [...s.items, placed], selectedId: id, activeLayoutId: null, ...pushHistory(s) }
-    }),
+    })
+    return id
+  },
 
   removeItem: (id) =>
     set((s) => ({ items: s.items.filter((i) => i.id !== id), selectedId: s.selectedId === id ? null : s.selectedId, activeLayoutId: null, ...pushHistory(s) })),

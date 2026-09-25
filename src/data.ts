@@ -13,6 +13,22 @@ export const defaultRoom: Room = {
   floorColor: '#8a4a34',
 }
 
+/** A fresh, empty room: one window centred on the back wall, one door on the front wall. */
+export function makeEmptyRoom(name: string, w = 300, d = 400, h = 260): Room {
+  const winW = Math.min(120, w - 40)
+  return {
+    ...defaultRoom,
+    name,
+    subtitle: '',
+    w,
+    d,
+    h,
+    window: { wall: 'top', offset: Math.round((w - winW) / 2), width: winW, height: 120, sill: 90 },
+    door: { wall: 'bottom', offset: 20, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' },
+    radiator: { wall: 'top', offset: Math.round((w - winW) / 2), width: 0, depth: 10, height: 60 },
+  }
+}
+
 /** Catalogue of everything in the room. Positions come from the layouts. */
 export const defaultItems: Item[] = [
   {

@@ -9,6 +9,10 @@ export type ItemKind =
   | 'wardrobe'
   | 'bookcase'
   | 'rug'
+  | 'rugRect'
+  | 'nightstand'
+  | 'sofa'
+  | 'table'
   | 'box'
 
 /** All lengths are centimetres. x runs left→right, y runs top→bottom on the plan. */
@@ -44,6 +48,8 @@ export interface Opening {
 export interface Door extends Opening {
   /** 'left' = hinge at the smaller offset along the wall, 'right' = at the larger one */
   hinge: 'left' | 'right'
+  /** which way the leaf opens: into the room (affects clearance) or out of it */
+  swing?: 'in' | 'out'
 }
 
 export interface Radiator {
@@ -92,4 +98,54 @@ export interface Rect {
   y0: number
   x1: number
   y1: number
+}
+
+/** A preset in the furniture catalogue (see src/catalog.ts). Sizes in cm. */
+export interface CatalogEntry {
+  id: string
+  name: string
+  kind: ItemKind
+  category: string
+  w: number
+  d: number
+  h: number
+  color: string
+  note?: string
+}
+
+/** Everything needed to reopen a room later. Stored by src/storage. */
+export interface RoomDoc {
+  id: string
+  /** e.g. "Mila's room" */
+  name: string
+  /** free grouping label, e.g. "Home", "Cabin", "2027 renovation" */
+  group: string
+  notes: string
+  createdAt: string
+  updatedAt: string
+  room: Room
+  items: Item[]
+  layouts: Layout[]
+  settings: {
+    daytime: boolean
+    doorAngle: number
+    blinds: number
+    bedding: boolean
+    walkHeight: 'adult' | 'child'
+    quality: 'best' | 'fast'
+  }
+  /** schema version for future migrations */
+  version: number
+}
+
+/** Lightweight listing entry so the library screen does not load every document. */
+export interface RoomSummary {
+  id: string
+  name: string
+  group: string
+  updatedAt: string
+  createdAt: string
+  w: number
+  d: number
+  itemCount: number
 }
