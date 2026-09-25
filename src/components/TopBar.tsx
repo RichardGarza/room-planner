@@ -1,12 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { presetLayouts } from '../data'
 import { useLibrary } from '../library'
 import { useStore } from '../store'
+import type { Layout } from '../types'
+import './suggest.css'
+
+const HINT_KEY = 'room-planner.hint.suggestions'
+
+function hintDismissed() {
+  try { return localStorage.getItem(HINT_KEY) === '1' } catch { return false }
+}
 
 export function TopBar() {
   const room = useStore((s) => s.room)
   const items = useStore((s) => s.items)
   const savedLayouts = useStore((s) => s.savedLayouts)
+  const suggestions = useStore((s) => s.suggestions)
+  const suggestionsStale = useStore((s) => s.suggestionsStale)
+  const generateSuggestions = useStore((s) => s.generateSuggestions)
   const activeLayoutId = useStore((s) => s.activeLayoutId)
   const applyLayout = useStore((s) => s.applyLayout)
   const undo = useStore((s) => s.undo)
@@ -24,12 +35,57 @@ export function TopBar() {
   const [help, setHelp] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(room.name)
+  const [thinking, setThinking] = useState(false)
+  const [noResult, setNoResult] = useState(false)
+  const [showHint, setShowHint] = useState(() => !hintDismissed())
+  const [arrowLeft, setArrowLeft] = useState<number | null>(null)
+  const labelRef = useRef<HTMLSpanElement>(null)
+  const hintRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (!editing) setDraft(room.name) }, [room.name, editing])
 
-  // The A/B/C/Now presets describe Mila's furniture; other rooms flip between their own saved versions.
+  // The A/B/C/Now presets describe Mila's furniture; other rooms get suggestions worked out from their own pieces.
   const isExample = items.some((i) => i.id in presetLayouts[0].placements)
-  const tabs = isExample ? presetLayouts : savedLayouts
+  const suggested: Layout[] = isExample ? presetLayouts : suggestions
+  // the example room's document carries the presets as its own layouts: do not list them twice
+  const yours = savedLayouts.filter((l) => !suggested.some((s) => s.id === l.id))
+
+  // keep the hint's arrow under the "Suggested layouts" label
+  useLayoutEffect(() => {
+    if (!showHint) return
+    const place = () => {
+      const l = labelRef.current?.getBoundingClientRect()
+      const h = hintRef.current?.getBoundingClientRect()
+      if (l && h) setArrowLeft(l.left + l.width / 2 - h.left)
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [showHint, suggested.length, yours.length, thinking])
+
+  const dismissHint = () => {
+    setShowHint(false)
+    try { localStorage.setItem(HINT_KEY, '1') } catch { /* private mode: the hint just comes back next time */ }
+  }
+
+  const suggest = () => {
+    if (thinking) return
+    setThinking(true)
+    setNoResult(false)
+    // synchronous, but let the "Thinking…" label paint first
+    setTimeout(() => {
+      generateSuggestions()
+      setNoResult(useStore.getState().suggestions.length === 0)
+      setThinking(false)
+    }, 30)
+  }
+
+  const tab = (l: Layout) => (
+    <button key={l.id} className={`tab${l.id === activeLayoutId ? ' on' : ''}`} title={`${l.name} — ${l.description}`} onClick={() => applyLayout(l)}>
+      <span className="tab-text">{l.name}</span>
+      {l.recommended && <span className="badge">Recommended</span>}
+    </button>
+  )
 
   const commitName = () => {
     setEditing(false)
@@ -56,6 +112,7 @@ export function TopBar() {
     : 'Saved'
 
   return (
+    <>
     <header className="topbar">
       <div className="brand">
         <button className="back" onClick={() => void close()} title="Back to your rooms">‹ Rooms</button>
@@ -84,18 +141,41 @@ export function TopBar() {
         </div>
       </div>
       <div className="tabs-wrap">
-        <nav className="tabs">
-          {tabs.length === 0 ? (
-            <span className="tab empty">Save a layout in the sidebar to flip between versions</span>
-          ) : (
-            tabs.map((l) => (
-              <button key={l.id} className={`tab${l.id === activeLayoutId ? ' on' : ''}`} onClick={() => applyLayout(l)}>
-                {l.name}
-                {l.recommended && <span className="badge">Recommended</span>}
-              </button>
-            ))
-          )}
-        </nav>
+        <div className="tab-groups">
+          <div className="tab-group">
+            <span ref={labelRef} className="tab-label suggested" title="Ready-made arrangements of your furniture — click one, then tweak it">✨ Suggested layouts</span>
+            <nav className="tabs">
+              {suggested.length > 0 ? (
+                <>
+                  {suggested.map(tab)}
+                  {!isExample && suggestionsStale && (
+                    <button className="tab refresh" onClick={suggest} disabled={thinking} title="The furniture or the room changed — work out fresh suggestions">
+                      {thinking ? 'Thinking…' : '↻ Refresh'}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button className="tab suggest-btn" onClick={suggest} disabled={thinking || items.length === 0} title={items.length === 0 ? 'Add some furniture first' : 'Work out a few good arrangements of your furniture'}>
+                    {thinking ? 'Thinking…' : '✨ Suggest layouts'}
+                  </button>
+                  {noResult && <span className="tab empty">Add a bed or another big piece first</span>}
+                </>
+              )}
+            </nav>
+          </div>
+          <span className="tab-divider" aria-hidden="true" />
+          <div className="tab-group">
+            <span className="tab-label">Your layouts</span>
+            <nav className="tabs">
+              {yours.length === 0 ? (
+                <span className="tab empty" title="Arrange the room, then save it under “My layouts” in the sidebar">None saved yet</span>
+              ) : (
+                yours.map(tab)
+              )}
+            </nav>
+          </div>
+        </div>
         <span className={`save-state ${status}`} title={error ?? undefined}>{saveText}</span>
       </div>
       <div className="actions">
@@ -119,5 +199,17 @@ export function TopBar() {
         )}
       </div>
     </header>
+    {showHint && (
+      <div ref={hintRef} className="suggest-hint" role="note">
+        {arrowLeft !== null && <i className="suggest-hint-arrow" style={{ left: arrowLeft }} />}
+        <span className="suggest-hint-text">
+          {suggested.length > 0
+            ? 'New here? Those are suggested layouts — we placed your furniture three ways. Click one, then drag things around.'
+            : 'New here? ✨ Suggest layouts places your furniture a few good ways. Click it, pick one, then drag things around.'}
+        </span>
+        <button className="suggest-hint-close" onClick={dismissHint}>Got it</button>
+      </div>
+    )}
+    </>
   )
 }

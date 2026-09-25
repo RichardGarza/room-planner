@@ -1,0 +1,58 @@
+/* Suggested layouts: the labelled tab groups in the top bar, and the first-time hint under it. */
+
+/* the tab groups may need a second line in narrow windows */
+.topbar { height: auto; min-height: 56px; }
+
+.tab-groups { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; padding: 6px 0; }
+.tab-group { display: flex; align-items: flex-start; gap: 3px 6px; min-width: 0; }
+.tab-group .tabs { flex: 1; min-width: 0; justify-content: flex-start; gap: 3px; }
+.tab-group .tab { padding: 4px 10px; }
+.tab-label { width: 132px; flex: none; line-height: 26px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; padding: 0 2px; }
+.tab-label.suggested { color: var(--pink); cursor: help; }
+.tab-divider { display: none; }
+
+.tab .tab-text { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab.suggest-btn { background: var(--pink-soft); color: var(--pink); }
+.tab.suggest-btn:hover { background: #fbd3e0; }
+.tab.suggest-btn:disabled { opacity: 0.6; cursor: default; }
+.tab.refresh { color: var(--pink); font-size: 11px; padding: 5px 9px; border: 1px dashed #f4b6cb; }
+.tab.refresh:hover { background: var(--pink-soft); }
+.tab.refresh:disabled { opacity: 0.6; cursor: default; }
+.tabs .tab.empty { font-size: 11px; }
+
+/* first-time hint: normal flow between the top bar and the panes, so it never covers the 3D controls */
+.suggest-hint {
+  position: relative;
+  margin: 2px 12px 10px;
+  padding: 8px 12px 8px 14px;
+  background: var(--pink-soft);
+  border: 1px solid #f4b6cb;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9b2a55;
+}
+.suggest-hint-arrow {
+  position: absolute;
+  top: -7px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: var(--pink-soft);
+  border-left: 1px solid #f4b6cb;
+  border-top: 1px solid #f4b6cb;
+  transform: rotate(45deg);
+}
+.suggest-hint-text { flex: 1; }
+.suggest-hint-close { flex: none; background: var(--pink); color: #fff; border-radius: 999px; padding: 5px 11px; font-weight: 800; font-size: 11px; }
+.suggest-hint-close:hover { background: #cf2f69; }
+
+.suggest-note { margin-top: 2px; font-style: italic; }
+
+@media (max-width: 1100px) {
+  .tab .tab-text { max-width: 180px; }
+  .tab-label { width: auto; }
+}
