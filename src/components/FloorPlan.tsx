@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { doorSwing, footprint, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
 import { useStore } from '../store'
-import type { Item, Room, Wall } from '../types'
+import type { Door, Item, Room, Wall } from '../types'
 
 const M = 34 // margin around the room for labels (cm units in the viewBox)
 const PARK_H = 150
@@ -44,14 +44,17 @@ export function FloorPlan() {
 
   const W = room.w + M * 2
   const H = room.d + M * 2 + PARK_H
-  const swing = doorSwing(room)
   const sel = items.find((i) => i.id === selectedId)
+  // doors that swing out draw their arc outside the room: widen the view so it is not clipped
+  const outPad = (wall: Wall) => Math.max(0, ...room.doors.filter((d) => d.swing === 'out' && d.wall === wall).map((d) => d.width + 22 - M))
+  const padL = outPad('left'), padR = outPad('right'), padT = outPad('top')
+  const wallsWithOpenings = new Set<Wall>([...room.windows, ...room.doors].map((o) => o.wall))
 
   return (
     <svg
       ref={svgRef}
       className="plan"
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`${-padL} ${-padT} ${W + padL + padR} ${H + padT}`}
       preserveAspectRatio="xMidYMin meet"
       onPointerMove={onMove}
       onPointerUp={onUp}
@@ -76,11 +79,11 @@ export function FloorPlan() {
           <line key={`h${i}`} x1={0} y1={(i + 1) * 50} x2={room.w} y2={(i + 1) * 50} stroke="#ede6df" strokeWidth={0.6} />
         ))}
 
-        {/* radiator */}
-        {(() => {
-          const r = wallStripRect(room, room.radiator.wall, room.radiator.offset, room.radiator.width, room.radiator.depth)
-          return <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="url(#hatch)" stroke="#a89f95" strokeWidth={0.8} />
-        })()}
+        {/* radiators */}
+        {room.radiators.map((rad) => {
+          const r = wallStripRect(room, rad.wall, rad.offset, rad.width, rad.depth)
+          return <rect key={rad.id} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="url(#hatch)" stroke="#a89f95" strokeWidth={0.8} />
+        })}
 
         {/* rug + solid items */}
         {items.filter((i) => i.inRoom && i.kind === 'rug').map((it) => (
@@ -90,23 +93,15 @@ export function FloorPlan() {
           <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
         ))}
 
-        {/* door swing */}
-        <path d={arcPath(swing.hx, swing.hy, swing.r, swing.leafDir)} fill="none" stroke="#c9bfb4" strokeWidth={1} strokeDasharray="3 3" />
-        <line
-          x1={swing.hx}
-          y1={swing.hy}
-          x2={swing.hx + swing.leafDir(90)[0] * swing.r}
-          y2={swing.hy + swing.leafDir(90)[1] * swing.r}
-          stroke="#5c534b"
-          strokeWidth={2}
-        />
+        {/* door swings (an out-swinging door draws its arc outside the room) */}
+        {room.doors.map((door) => <DoorSwing key={door.id} room={room} door={door} />)}
 
         {/* walls */}
         <rect x={0} y={0} width={room.w} height={room.d} fill="none" stroke="#3f3833" strokeWidth={6} />
-        {/* window */}
-        <Opening room={room} wall={room.window.wall} offset={room.window.offset} width={room.window.width} kind="window" />
-        {/* door opening */}
-        <Opening room={room} wall={room.door.wall} offset={room.door.offset} width={room.door.width} kind="door" />
+        {/* windows */}
+        {room.windows.map((win) => <Opening key={win.id} room={room} wall={win.wall} offset={win.offset} width={win.width} kind="window" />)}
+        {/* door openings */}
+        {room.doors.map((door) => <Opening key={door.id} room={room} wall={door.wall} offset={door.offset} width={door.width} kind="door" />)}
 
         {/* dimension lines for the selection */}
         {sel && sel.inRoom && <DimLines item={sel} roomW={room.w} roomD={room.d} />}
@@ -124,10 +119,21 @@ export function FloorPlan() {
         )}
 
         {/* labels */}
-        <WallText room={room} wall={room.window.wall} t={room.window.offset + room.window.width / 2} text="WINDOW" />
-        <WallText room={room} wall={room.door.wall} t={room.door.offset + room.door.width / 2} text="DOOR" />
+        {room.windows.map((win, i) => (
+          <WallText key={win.id} room={room} wall={win.wall} t={win.offset + win.width / 2} text={room.windows.length > 1 ? `WINDOW ${i + 1}` : 'WINDOW'} />
+        ))}
+        {room.doors.map((door, i) => (
+          <WallText
+            key={door.id}
+            room={room}
+            wall={door.wall}
+            t={door.offset + door.width / 2}
+            text={room.doors.length > 1 ? `DOOR ${i + 1}` : 'DOOR'}
+            dist={door.swing === 'out' ? door.width + 12 : undefined}
+          />
+        ))}
         {(['top', 'bottom', 'left', 'right'] as const)
-          .filter((w) => w !== room.window.wall && w !== room.door.wall)
+          .filter((w) => !wallsWithOpenings.has(w))
           .map((w) => (
             <WallText key={w} room={room} wall={w} t={(w === 'top' || w === 'bottom' ? room.w : room.d) / 2} text={w === 'left' ? 'LEFT WALL' : w === 'right' ? 'RIGHT WALL' : w === 'top' ? 'BACK WALL' : 'FRONT WALL'} />
           ))}
@@ -157,6 +163,17 @@ export function FloorPlan() {
         </g>
       </g>
     </svg>
+  )
+}
+
+function DoorSwing({ room, door }: { room: Room; door: Door }) {
+  const swing = doorSwing(room, door)
+  const [lx, ly] = swing.leafDir(90)
+  return (
+    <g opacity={swing.out ? 0.7 : 1}>
+      <path d={arcPath(swing.hx, swing.hy, swing.r, swing.leafDir)} fill="none" stroke="#c9bfb4" strokeWidth={1} strokeDasharray="3 3" />
+      <line x1={swing.hx} y1={swing.hy} x2={swing.hx + lx * swing.r} y2={swing.hy + ly * swing.r} stroke="#5c534b" strokeWidth={2} />
+    </g>
   )
 }
 
@@ -190,10 +207,10 @@ function Opening({ room, wall, offset, width, kind }: { room: Room; wall: Wall; 
   )
 }
 
-function WallText({ room, wall, t, text }: { room: Room; wall: Wall; t: number; text: string }) {
+function WallText({ room, wall, t, text, dist = 14 }: { room: Room; wall: Wall; t: number; text: string; dist?: number }) {
   const [x, y] = wallPoint(room, wall, t)
   const { normal } = wallAxes(wall)
-  const ox = -normal[0] * 14, oy = -normal[1] * 14
+  const ox = -normal[0] * dist, oy = -normal[1] * dist
   const rot = wall === 'left' ? -90 : wall === 'right' ? 90 : 0
   return (
     <text transform={`translate(${x + ox} ${y + oy + (wall === 'top' ? 2 : wall === 'bottom' ? 4 : 0)}) rotate(${rot})`} className="plan-label" textAnchor="middle" dominantBaseline={rot ? 'middle' : undefined}>

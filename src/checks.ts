@@ -1,9 +1,43 @@
-import { doorClearance, gapBetween, intersects, overlapArea, rectOf, wallStripRect } from './geometry'
-import type { Check, Item, Room } from './types'
+import { doorClearanceFor, doorwayRect, gapBetween, intersects, overlapArea, rectOf, wallStripRect } from './geometry'
+import type { Check, Item, Rect, Room, Wall } from './types'
 
 const MIN_PASSAGE = 60
 const BED_EXIT = 45
 const MIN_DOOR_ANGLE = 85
+/** how close to a wall an item must stand to count as "against" it */
+const WALL_TOUCH = 5
+/** how much of a window's span an item must share to count as standing under it */
+const MIN_SPAN = 20
+/** fraction of the window height an item may rise into before it "blocks" the window */
+const BLOCKS_WINDOW = 0.7
+/** strip in front of a door that must stay clear */
+const DOORWAY_DEPTH = 40
+
+/** "the window" with one, "window 2" with several (1-based). */
+function nameOf(kind: 'window' | 'door' | 'radiator', i: number, count: number) {
+  return count > 1 ? `${kind} ${i + 1}` : `the ${kind}`
+}
+function sillOf(i: number, count: number) {
+  return count > 1 ? `the sill of window ${i + 1}` : 'the window sill'
+}
+
+function touchesWall(room: Room, r: Rect, wall: Wall, reach: number) {
+  switch (wall) {
+    case 'top': return r.y0 <= reach
+    case 'bottom': return r.y1 >= room.d - reach
+    case 'left': return r.x0 <= reach
+    case 'right': return r.x1 >= room.w - reach
+  }
+}
+
+/** An item's extent along a wall, in that wall's offset coordinate. */
+function spanOf(r: Rect, wall: Wall): { offset: number; width: number } {
+  return wall === 'top' || wall === 'bottom' ? { offset: r.x0, width: r.x1 - r.x0 } : { offset: r.y0, width: r.y1 - r.y0 }
+}
+
+function spanOverlap(a: { offset: number; width: number }, b: { offset: number; width: number }) {
+  return Math.min(a.offset + a.width, b.offset + b.width) - Math.max(a.offset, b.offset)
+}
 
 /** A chair pushed under a desk is not a collision. */
 function tucksUnder(chair: Item, desk: Item) {
@@ -43,41 +77,67 @@ export function runChecks(room: Room, items: Item[]): Check[] {
     }
   }
 
-  // 3. Window coverage (anything tall touching the window wall within its span)
-  const win = wallStripRect(room, room.window.wall, room.window.offset, room.window.width, 12)
-  for (const it of solid) {
-    const r = rectOf(it)
-    const area = overlapArea(r, win)
-    if (area > 0 && it.h > room.window.sill) {
-      const covered = area / (room.window.width * 12)
+  // 3. Windows: does what stands under each one fit below the sill?
+  room.windows.forEach((win, i) => {
+    const label = nameOf('window', i, room.windows.length)
+    // a radiator under the window keeps furniture that far from the wall; still counts as "against the wall"
+    const radDepth = Math.max(0, ...room.radiators.filter((r) => r.wall === win.wall && spanOverlap(r, win) > 0).map((r) => r.depth))
+    for (const it of solid) {
+      const r = rectOf(it)
+      if (!touchesWall(room, r, win.wall, WALL_TOUCH + radDepth)) continue
+      if (spanOverlap(spanOf(r, win.wall), win) < MIN_SPAN) continue
+      if (it.h <= win.sill) {
+        checks.push({ level: 'ok', text: `${it.name} fits under ${label} with ${Math.round(win.sill - it.h)} cm to spare`, itemIds: [it.id] })
+        continue
+      }
+      const above = Math.round(it.h - win.sill)
+      const covered = Math.min(above, win.height) / win.height
       checks.push({
-        level: covered > 0.8 ? 'bad' : 'warn',
-        text: covered > 0.8 ? `${it.name} blocks the window` : `${it.name} covers part of the window`,
+        level: covered > BLOCKS_WINDOW ? 'bad' : 'warn',
+        text: covered > BLOCKS_WINDOW ? `${it.name} blocks ${label}` : `${it.name} stands ${above} cm above ${sillOf(i, room.windows.length)}`,
         itemIds: [it.id],
       })
     }
-  }
+  })
 
-  // 4. Radiator
-  const rad = wallStripRect(room, room.radiator.wall, room.radiator.offset, room.radiator.width, room.radiator.depth + 15)
-  for (const it of solid) {
-    if (overlapArea(rectOf(it), rad) > 0) {
-      const frac = overlapArea(rectOf(it), rad) / (room.radiator.width * (room.radiator.depth + 15))
-      checks.push({
-        level: 'warn',
-        text: frac > 0.6 ? `${it.name} is in front of the radiator` : `${it.name} partly covers the radiator`,
-        itemIds: [it.id],
-      })
+  // 4. Radiators
+  room.radiators.forEach((radiator, i) => {
+    const label = nameOf('radiator', i, room.radiators.length)
+    const rad = wallStripRect(room, radiator.wall, radiator.offset, radiator.width, radiator.depth + 15)
+    for (const it of solid) {
+      const area = overlapArea(rectOf(it), rad)
+      if (area > 0) {
+        const frac = area / (radiator.width * (radiator.depth + 15))
+        checks.push({
+          level: 'warn',
+          text: frac > 0.6 ? `${it.name} is in front of ${label}` : `${it.name} partly covers ${label}`,
+          itemIds: [it.id],
+        })
+      }
     }
-  }
+  })
 
-  // 5. Door swing
-  const { maxAngle, blocker } = doorClearance(room, items)
-  if (blocker && maxAngle < MIN_DOOR_ANGLE) {
-    checks.push({ level: maxAngle < 45 ? 'bad' : 'warn', text: `Door only opens to ${maxAngle}° — ${blocker.name} is in the way`, itemIds: [blocker.id] })
-  } else {
-    checks.push({ level: 'ok', text: 'Wide, clear entry into the room', itemIds: [] })
-  }
+  // 5. Doors: swing clearance for doors opening in, a clear doorway strip for doors opening out
+  room.doors.forEach((door, i) => {
+    const several = room.doors.length > 1
+    const label = nameOf('door', i, room.doors.length)
+    const Label = several ? `Door ${i + 1}` : 'Door'
+    if (door.swing === 'in') {
+      const { maxAngle, blocker } = doorClearanceFor(room, door, items)
+      if (blocker && maxAngle < MIN_DOOR_ANGLE) {
+        checks.push({ level: maxAngle < 45 ? 'bad' : 'warn', text: `${Label} only opens to ${maxAngle}° — ${blocker.name} is in the way`, itemIds: [blocker.id] })
+        return
+      }
+    } else {
+      const strip = doorwayRect(room, door, DOORWAY_DEPTH)
+      const blockers = solid.filter((it) => intersects(rectOf(it), strip))
+      for (const it of blockers) {
+        checks.push({ level: 'bad', text: `${it.name} blocks the doorway${several ? ` of ${label}` : ''}`, itemIds: [it.id] })
+      }
+      if (blockers.length) return
+    }
+    checks.push({ level: 'ok', text: several ? `Clear entry through ${label}` : 'Wide, clear entry into the room', itemIds: [] })
+  })
 
   // 6. Passages next to the bed
   if (bed) {

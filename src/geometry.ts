@@ -1,4 +1,4 @@
-import type { Item, Rect, Room, Wall } from './types'
+import type { Door, Item, Rect, Room, Wall } from './types'
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -79,24 +79,35 @@ export function wallLength(room: Room, wall: Wall) {
 /**
  * Door swing: hinge point, and the leaf direction as a function of the opening angle.
  * `hinge: 'left'` means the hinge sits at the smaller offset along the wall.
+ * A door that swings "out" sweeps away from the room: the wall normal is mirrored.
  */
-export function doorSwing(room: Room) {
-  const { door } = room
-  const { along, normal } = wallAxes(door.wall)
+export function doorSwing(room: Room, door: Door) {
+  const { along, normal: inward } = wallAxes(door.wall)
+  const out = door.swing === 'out'
+  const normal: [number, number] = out ? [-inward[0], -inward[1]] : inward
   const sign = door.hinge === 'left' ? 1 : -1
   const [hx, hy] = wallPoint(room, door.wall, door.hinge === 'left' ? door.offset : door.offset + door.width)
   const leafDir = (deg: number): [number, number] => {
     const a = (deg * Math.PI) / 180
     return [sign * along[0] * Math.cos(a) + normal[0] * Math.sin(a), sign * along[1] * Math.cos(a) + normal[1] * Math.sin(a)]
   }
-  return { hx, hy, r: door.width, leafDir, sign }
+  return { hx, hy, r: door.width, leafDir, sign, out }
 }
 
-/** Max angle (deg, 0..90) the door can open before hitting an item. */
-export function doorClearance(room: Room, items: Item[]) {
-  const { hx, hy, r, leafDir } = doorSwing(room)
+/** Strip `depth` cm into the room in front of a door: what must stay clear to walk through it. */
+export function doorwayRect(room: Room, door: Door, depth = 40): Rect {
+  return wallStripRect(room, door.wall, door.offset, door.width, depth)
+}
+
+/**
+ * Max angle (deg, 0..90) one door can open before hitting an item.
+ * An out-swinging leaf never meets the furniture, so it always reports 90.
+ */
+export function doorClearanceFor(room: Room, door: Door, items: Item[]) {
   let best = 90
   let blocker: Item | null = null
+  if (door.swing === 'out') return { maxAngle: best, blocker }
+  const { hx, hy, r, leafDir } = doorSwing(room, door)
   for (const it of items) {
     if (!it.inRoom || it.kind === 'rug') continue
     const rc = rectOf(it)
@@ -115,6 +126,16 @@ export function doorClearance(room: Room, items: Item[]) {
     }
   }
   return { maxAngle: best, blocker }
+}
+
+/** Worst clearance over all the room's doors (90 with nothing in the way). */
+export function doorClearance(room: Room, items: Item[]) {
+  let result: { maxAngle: number; blocker: Item | null; door: Door | null } = { maxAngle: 90, blocker: null, door: null }
+  for (const door of room.doors) {
+    const c = doorClearanceFor(room, door, items)
+    if (c.maxAngle < result.maxAngle) result = { ...c, door }
+  }
+  return result
 }
 
 export function wallLabel(w: Wall) {

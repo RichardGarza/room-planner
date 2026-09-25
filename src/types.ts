@@ -36,6 +36,7 @@ export interface Item {
 }
 
 export interface Opening {
+  id: string
   wall: Wall
   /** distance along the wall from its left/top end to the opening's start */
   offset: number
@@ -49,10 +50,11 @@ export interface Door extends Opening {
   /** 'left' = hinge at the smaller offset along the wall, 'right' = at the larger one */
   hinge: 'left' | 'right'
   /** which way the leaf opens: into the room (affects clearance) or out of it */
-  swing?: 'in' | 'out'
+  swing: 'in' | 'out'
 }
 
 export interface Radiator {
+  id: string
   wall: Wall
   offset: number
   width: number
@@ -66,9 +68,9 @@ export interface Room {
   w: number
   d: number
   h: number
-  window: Opening
-  door: Door
-  radiator: Radiator
+  windows: Opening[]
+  doors: Door[]
+  radiators: Radiator[]
   wallColors: { left: string; right: string; top: string; bottom: string }
   floorColor: string
 }
