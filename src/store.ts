@@ -137,7 +137,8 @@ function walkStart(room: Room, preset: WalkPreset): WalkPose {
   // stand just inside the opening, facing away from it
   const o = preset === 'door' ? room.door : room.window
   const t = o.offset + o.width / 2
-  const inset = 40
+  // stand past the swing of the door leaf so it is not filling the view
+  const inset = preset === 'door' ? Math.min(o.width + 20, room.d / 3) : 45
   switch (o.wall) {
     case 'top': return { x: t, y: inset, yaw: Math.PI, pitch: -0.05 }
     case 'bottom': return { x: t, y: room.d - inset, yaw: 0, pitch: -0.05 }
