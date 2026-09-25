@@ -1,14 +1,14 @@
 import type { Item } from '../../types'
 import { cm } from '../util'
 import { doorCount, drawerGrid, dresserVariant, isWoodTone, nightstandDrawers, shade } from './layout'
-import { Metal, Painted, Surface, useFx } from './materials'
+import { Metal, Painted, Surface } from './materials'
 import { Bar, Box, Cyl, Knob, Legs, RBox } from './props'
 
 const GAP = 0.012
 const TOP = 0.025
 
-/** Carcass shade: darker so the drawer gaps read as shadow lines. */
-const inner = (c: string) => shade(c, 0.8)
+/** Reveal shade: the dark plate behind drawer and door fronts, so the gaps read as shadow lines. */
+const inner = (c: string) => shade(c, 0.55)
 
 /**
  * Dresser / chest of drawers: plinth, carcass, overhanging top and a grid of inset
@@ -16,7 +16,6 @@ const inner = (c: string) => shade(c, 0.8)
  * legs, play kitchens a hob.
  */
 export function Dresser({ item }: { item: Item }) {
-  const { fast } = useFx()
   const w = cm(item.w), d = cm(item.d), h = cm(item.h)
   const variant = dresserVariant(item.name)
   const { rows, cols } = drawerGrid(item.name, item.w, item.h)
@@ -37,7 +36,8 @@ export function Dresser({ item }: { item: Item }) {
       ) : (
         <Box size={[w - 0.06, plinth, d - 0.06]} at={[0, plinth / 2, 0]}><Painted color={shade(item.color, 0.62)} /></Box>
       )}
-      <Box size={[w - 0.02, bodyH, d - 0.02]} at={[0, plinth + bodyH / 2, -0.005]}><Painted color={inner(item.color)} /></Box>
+      <Box size={[w - 0.02, bodyH, d - 0.04]} at={[0, plinth + bodyH / 2, -0.015]}><Surface color={item.color} /></Box>
+      <Box size={[w - 0.04, bodyH - 0.01, 0.006]} at={[0, plinth + bodyH / 2, d / 2 - 0.023]} cast={false} receive={false}><Painted color={inner(item.color)} roughness={0.9} /></Box>
       <RBox size={[w, TOP, d]} at={[0, plinth + bodyH + TOP / 2, 0]} radius={0.006}><Surface color={item.color} tile={2} /></RBox>
 
       {Array.from({ length: rows * cols }, (_, i) => {
@@ -46,7 +46,7 @@ export function Dresser({ item }: { item: Item }) {
         const y = y0 + (rows - 1 - r + 0.5) * rh
         return (
           <group key={i}>
-            <RBox size={[cw - GAP, rh - GAP, 0.02]} at={[x, y, d / 2 - 0.01]} radius={0.004}><Surface color={front} tile={1} /></RBox>
+            <RBox size={[cw - GAP, rh - GAP, 0.02]} at={[x, y, d / 2 - 0.01]} radius={0.004} receive={false}><Surface color={front} tile={1} /></RBox>
             {!noHandles && (wide ? (
               <Bar length={Math.min(0.16, cw * 0.4)} at={[x, y, d / 2 + 0.014]} />
             ) : (
@@ -64,7 +64,7 @@ export function Dresser({ item }: { item: Item }) {
           <RBox size={[w - 0.08, 0.04, d - 0.06]} at={[0, h - rim + 0.02, 0.01]} radius={0.015}><Painted color="#f6f2ec" roughness={0.9} /></RBox>
         </>
       )}
-      {variant === 'kitchen' && !fast && (
+      {variant === 'kitchen' && (
         <>
           {[-1, 1].map((sx) => (
             <Cyl key={sx} r={Math.min(0.08, w * 0.12)} h={0.006} at={[sx * w * 0.2, h + 0.003, 0.02]} seg={20}><Painted color="#3a3d42" roughness={0.4} /></Cyl>
@@ -116,7 +116,11 @@ export function Nightstand({ item }: { item: Item }) {
   )
 }
 
-/** Wardrobe: plinth, carcass, two or three doors with long handles and a top overhang. */
+/**
+ * Wardrobe: plinth, carcass, two or three doors with long handles and a top
+ * overhang. The doors are separated by a 12 mm gap over a dark reveal plate
+ * (no shadows) so the joint reads as a clean shadow line rather than a dotted seam.
+ */
 export function Wardrobe({ item }: { item: Item }) {
   const w = cm(item.w), d = cm(item.d), h = cm(item.h)
   const doors = doorCount(item.w)
@@ -131,16 +135,17 @@ export function Wardrobe({ item }: { item: Item }) {
   return (
     <>
       <Box size={[w - 0.06, plinth, d - 0.06]} at={[0, plinth / 2, 0]}><Painted color={shade(item.color, 0.62)} /></Box>
-      <Box size={[w - 0.02, bodyH, d - 0.02]} at={[0, plinth + bodyH / 2, -0.005]}><Painted color={inner(item.color)} /></Box>
+      <Box size={[w - 0.02, bodyH, d - 0.04]} at={[0, plinth + bodyH / 2, -0.015]}><Surface color={item.color} /></Box>
+      <Box size={[w - 0.04, bodyH - 0.01, 0.006]} at={[0, plinth + bodyH / 2, d / 2 - 0.023]} cast={false} receive={false}><Painted color={inner(item.color)} roughness={0.9} /></Box>
       <RBox size={[w, top, d]} at={[0, plinth + bodyH + top / 2, 0]} radius={0.006}><Surface color={item.color} tile={2} /></RBox>
       {Array.from({ length: doors }, (_, i) => {
         const x = -w / 2 + 0.01 + (i + 0.5) * dw
         // handle sits on the edge that meets the next door (or the right edge of a single door)
         const edge = doors === 1 ? 1 : i < doors / 2 ? 1 : -1
-        const hx = x + edge * (dw / 2 - 0.05)
+        const hx = x + edge * (dw / 2 - 0.045)
         return (
           <group key={i}>
-            <RBox size={[dw - 0.008, doorH, 0.02]} at={[x, plinth + 0.01 + doorH / 2, d / 2 - 0.01]} radius={0.004}><Surface color={item.color} /></RBox>
+            <RBox size={[dw - GAP, doorH, 0.02]} at={[x, plinth + 0.01 + doorH / 2, d / 2 - 0.01]} radius={0.004} receive={false}><Surface color={item.color} /></RBox>
             <Bar length={handleLen} at={[hx, handleY, d / 2 + 0.014]} vertical />
           </group>
         )

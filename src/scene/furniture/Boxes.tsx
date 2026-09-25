@@ -2,7 +2,7 @@ import { Instance, Instances } from '@react-three/drei'
 import type { Item } from '../../types'
 import { cm } from '../util'
 import { boxVariant, shade } from './layout'
-import { Fabric, Lacquer, Metal, Painted, Plastic, Surface, useFx } from './materials'
+import { Bulb, Fabric, Lacquer, Metal, Painted, Plastic, Surface, useFx } from './materials'
 import { Box, Cyl, RBox, Slats, useSeg } from './props'
 
 /** Generic box item, with a few recognised silhouettes by name. */
@@ -23,7 +23,7 @@ export function BoxItem({ item }: { item: Item }) {
 
 /** Upright piano: lacquered case, keybed with keys, fallboard, pedals. */
 function Piano({ item }: { item: Item }) {
-  const { emissive, ei, fast } = useFx()
+  const { emissive, ei } = useFx()
   const w = cm(item.w), d = cm(item.d), h = cm(item.h)
   const caseD = d * 0.55
   const keyY = Math.min(0.72, h * 0.58)
@@ -31,24 +31,37 @@ function Piano({ item }: { item: Item }) {
   const white = Math.max(20, Math.round((w - 0.16) / 0.0235))
   const keyW = (w - 0.16) / white
   const blackKeys = Array.from({ length: white }, (_, i) => i).filter((i) => [0, 1, 3, 4, 5].includes(i % 7))
+  // the keybed and cheeks are a darker lacquer so the keys read against them
+  const bed = shade(item.color, 0.78)
+  const keysD = keyD - 0.03
+  const keysZ = d / 2 - keyD / 2 + 0.015
+  const keysBack = keysZ - keysD / 2
   return (
     <>
       <RBox size={[w, h, caseD]} at={[0, h / 2, -d / 2 + caseD / 2]} radius={0.012}><Lacquer color={item.color} /></RBox>
       {/* keybed shelf + cheeks */}
-      <Box size={[w, 0.08, keyD]} at={[0, keyY - 0.04, d / 2 - keyD / 2]}><Lacquer color={item.color} /></Box>
+      <Box size={[w, 0.08, keyD]} at={[0, keyY - 0.04, d / 2 - keyD / 2]}><Lacquer color={bed} /></Box>
       {[-1, 1].map((sx) => (
-        <Box key={sx} size={[0.06, 0.12, keyD]} at={[sx * (w / 2 - 0.03), keyY + 0.06, d / 2 - keyD / 2]}><Lacquer color={item.color} /></Box>
+        <Box key={sx} size={[0.06, 0.12, keyD]} at={[sx * (w / 2 - 0.03), keyY + 0.06, d / 2 - keyD / 2]}><Lacquer color={bed} /></Box>
       ))}
-      <Box size={[w - 0.12, 0.02, keyD - 0.03]} at={[0, keyY + 0.01, d / 2 - keyD / 2 + 0.02]}><Painted color="#f7f5ee" roughness={0.35} /></Box>
-      {!fast && (
-        <Instances limit={blackKeys.length} castShadow>
-          <boxGeometry args={[keyW * 0.55, 0.012, (keyD - 0.03) * 0.6]} />
-          <meshStandardMaterial color="#111111" roughness={0.4} emissive={emissive} emissiveIntensity={ei} />
-          {blackKeys.map((i) => (
-            <Instance key={i} position={[-(w - 0.16) / 2 + (i + 1) * keyW, keyY + 0.026, d / 2 - keyD + 0.02 + ((keyD - 0.03) * 0.6) / 2]} />
-          ))}
-        </Instances>
-      )}
+      {/* white keys: one bright slab with scored gaps, black keys instanced on top */}
+      <Box size={[w - 0.12, 0.02, keysD]} at={[0, keyY + 0.01, keysZ]} receive={false}><Painted color="#fbfaf5" roughness={0.3} /></Box>
+      <Instances limit={white - 1} receiveShadow={false}>
+        <boxGeometry args={[0.0012, 0.004, keysD]} />
+        <meshStandardMaterial color="#8d887c" roughness={0.6} emissive={emissive} emissiveIntensity={ei} />
+        {Array.from({ length: white - 1 }, (_, i) => (
+          <Instance key={i} position={[-(w - 0.16) / 2 + (i + 1) * keyW, keyY + 0.019, keysZ]} />
+        ))}
+      </Instances>
+      <Instances limit={blackKeys.length} castShadow receiveShadow={false}>
+        <boxGeometry args={[keyW * 0.55, 0.014, keysD * 0.6]} />
+        <meshStandardMaterial color="#111111" roughness={0.4} emissive={emissive} emissiveIntensity={ei} />
+        {blackKeys.map((i) => (
+          <Instance key={i} position={[-(w - 0.16) / 2 + (i + 1) * keyW, keyY + 0.027, keysBack + (keysD * 0.6) / 2]} />
+        ))}
+      </Instances>
+      {/* dark fallboard strip where the keys disappear under the case */}
+      <Box size={[w - 0.12, 0.05, 0.002]} at={[0, keyY + 0.045, keysBack + 0.001]} cast={false} receive={false}><Painted color="#1c1714" roughness={0.6} /></Box>
       {/* fallboard lip + music stand */}
       <Box size={[w - 0.12, 0.05, 0.02]} at={[0, keyY + 0.14, -d / 2 + caseD + 0.01]}><Lacquer color={shade(item.color, 1.15)} /></Box>
       <Box size={[w * 0.45, 0.16, 0.01]} at={[0, keyY + 0.4, -d / 2 + caseD + 0.005]} rot={[-0.2, 0, 0]}><Lacquer color={shade(item.color, 1.15)} /></Box>
@@ -63,7 +76,7 @@ function Piano({ item }: { item: Item }) {
   )
 }
 
-/** Floor lamp: weighted base, thin pole, glowing drum shade at the top. */
+/** Floor lamp: weighted base, thin pole, drum shade that glows and lights the wall beside it in the evening. */
 function FloorLamp({ item }: { item: Item }) {
   const w = cm(item.w), h = cm(item.h)
   const shadeH = Math.min(0.3, h * 0.22)
@@ -72,10 +85,11 @@ function FloorLamp({ item }: { item: Item }) {
     <>
       <Cyl r={Math.min(0.14, r * 0.9)} h={0.02} at={[0, 0.01, 0]} seg={28}><Metal color="#3a3d42" roughness={0.4} /></Cyl>
       <Cyl r={0.012} h={h - shadeH - 0.02} at={[0, 0.02 + (h - shadeH - 0.02) / 2, 0]} seg={10}><Metal color="#3a3d42" roughness={0.4} /></Cyl>
-      <Cyl r={r} r2={r * 0.9} h={shadeH} at={[0, h - shadeH / 2, 0]} seg={32} open cast={false}>
+      <Cyl r={r} r2={r * 0.9} h={shadeH} at={[0, h - shadeH / 2, 0]} seg={32} open cast={false} receive={false}>
         <Fabric color={item.color} glow="#ffd9a0" />
       </Cyl>
       <Cyl r={r * 0.9} h={0.004} at={[0, h - 0.002, 0]} seg={32} cast={false}><Painted color={shade(item.color, 0.95)} /></Cyl>
+      <Bulb at={[0, h - shadeH / 2, 0]} />
     </>
   )
 }
@@ -98,7 +112,7 @@ function BeanBag({ item }: { item: Item }) {
   const w = cm(item.w), d = cm(item.d), h = cm(item.h)
   const seg = useSeg(28)
   return (
-    <mesh position={[0, h * 0.42, 0]} scale={[w / 2, h * 0.5, d / 2]} castShadow receiveShadow>
+    <mesh position={[0, h * 0.5, 0]} scale={[w / 2, h * 0.5, d / 2]} castShadow receiveShadow>
       <sphereGeometry args={[1, seg, Math.round(seg * 0.7)]} />
       <Fabric color={item.color} />
     </mesh>

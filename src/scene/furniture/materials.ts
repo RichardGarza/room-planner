@@ -4,13 +4,14 @@ import { isWoodTone } from './layout'
 
 /* --------------------------- highlight + quality --------------------------- */
 
-/** Per-item context: selection/hover tint and the quality setting. */
+/** Per-item context: selection/hover tint, the quality setting and whether it is evening (lamps on). */
 export interface Fx {
   emissive: string
   ei: number
   fast: boolean
+  night: boolean
 }
-export const FxContext = createContext<Fx>({ emissive: '#000000', ei: 0, fast: false })
+export const FxContext = createContext<Fx>({ emissive: '#000000', ei: 0, fast: false, night: false })
 export const useFx = () => useContext(FxContext)
 
 /* ------------------------------ canvas textures ---------------------------- */
@@ -145,11 +146,11 @@ export function Surface({ color, roughness, tile }: MatProps & { tile?: number }
   return isWoodTone(color) ? createElement(Oak, { color, roughness, tile }) : createElement(Painted, { color, roughness })
 }
 
-/** Upholstery, bedding, cushions: high roughness with a soft sheen. */
+/** Upholstery, bedding, cushions: high roughness with a soft sheen. `glow` lights a lamp shade from inside, evenings only. */
 export function Fabric({ color, sheen = 0.35, glow }: MatProps & { sheen?: number; glow?: string }) {
-  const { emissive, ei, fast } = useFx()
+  const { emissive, ei, fast, night } = useFx()
   const bump = useTiled(fabricBump, 18, 18)
-  const lit = ei === 0 && glow
+  const lit = night && glow
   return createElement('meshPhysicalMaterial', {
     color,
     roughness: 0.95,
@@ -160,8 +161,14 @@ export function Fabric({ color, sheen = 0.35, glow }: MatProps & { sheen?: numbe
     bumpMap: fast ? null : bump,
     bumpScale: 0.012,
     emissive: lit ? glow : emissive,
-    emissiveIntensity: lit ? 0.35 : ei,
+    emissiveIntensity: lit ? 0.45 : ei,
   })
+}
+
+/** Warm bulb inside a lamp shade: lights the wall and floor beside it in the evening, off by day. */
+export function Bulb({ at }: { at: [number, number, number] }) {
+  const { night } = useFx()
+  return createElement('pointLight', { position: at, intensity: night ? 1.2 : 0, distance: 2.5, decay: 2, color: '#ffd9a0', castShadow: false })
 }
 
 /** Brushed metal for handles, legs, lifts. */

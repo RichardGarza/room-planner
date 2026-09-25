@@ -1,5 +1,6 @@
 import { type ThreeEvent } from '@react-three/fiber'
 import { useMemo, useState } from 'react'
+import { isRugKind } from '../geometry'
 import { useStore } from '../store'
 import type { Item } from '../types'
 import { cm } from './util'
@@ -23,6 +24,9 @@ import { Dresser, Nightstand, Wardrobe } from './furniture/Storage'
 export function Furniture({ item, onStartDrag }: { item: Item; onStartDrag?: () => void }) {
   const selected = useStore((s) => s.selectedId === item.id)
   const quality = useStore((s) => s.quality)
+  const daytime = useStore((s) => s.daytime)
+  // stable stacking order among the rugs so overlapping rugs never z-fight
+  const stack = useStore((s) => (isRugKind(item.kind) ? s.items.filter((i) => i.inRoom && isRugKind(i.kind)).findIndex((i) => i.id === item.id) : 0))
   const select = useStore((s) => s.select)
   const snapshot = useStore((s) => s.snapshot)
   const [hover, setHover] = useState(false)
@@ -33,13 +37,16 @@ export function Furniture({ item, onStartDrag }: { item: Item; onStartDrag?: () 
     if (onStartDrag) { snapshot(); onStartDrag() }
   }
 
+  // The tint is deliberately subtle: selection is carried by the floor outline
+  // (and the post-processing outline on best quality), not by recolouring bedding.
   const fx = useMemo<Fx>(
     () => ({
-      emissive: selected ? '#ff7a3d' : hover ? '#ffb27a' : '#000000',
-      ei: selected ? 0.2 : hover ? 0.1 : 0,
+      emissive: selected || hover ? '#ff7a3d' : '#000000',
+      ei: selected ? 0.08 : hover ? 0.04 : 0,
       fast: quality === 'fast',
+      night: !daytime,
     }),
-    [selected, hover, quality],
+    [selected, hover, quality, daytime],
   )
 
   return (
@@ -51,7 +58,7 @@ export function Furniture({ item, onStartDrag }: { item: Item; onStartDrag?: () 
       onPointerOut={() => setHover(false)}
     >
       <FxContext.Provider value={fx}>
-        <Piece item={item} />
+        <Piece item={item} stack={Math.max(0, stack)} />
         {selected && <Footprint item={item} />}
       </FxContext.Provider>
     </group>
@@ -60,7 +67,7 @@ export function Furniture({ item, onStartDrag }: { item: Item; onStartDrag?: () 
 
 export default Furniture
 
-function Piece({ item }: { item: Item }) {
+function Piece({ item, stack }: { item: Item; stack: number }) {
   switch (item.kind) {
     case 'bed': return <Bed item={item} />
     case 'chair': return <Chair item={item} />
@@ -72,37 +79,54 @@ function Piece({ item }: { item: Item }) {
     case 'bookcase': return <Bookcase item={item} />
     case 'shelf': return <CubeShelf item={item} />
     case 'sofa': return <Sofa item={item} />
-    case 'rug': return <RoundRug item={item} />
-    case 'rugRect': return <RectRug item={item} />
+    case 'rug': return <RoundRug item={item} stack={stack} />
+    case 'rugRect': return <RectRug item={item} stack={stack} />
     default: return <BoxItem item={item} />
   }
 }
 
-/** Pink outline of the footprint on the floor while the item is selected. */
+/**
+ * Pink outline of the footprint on the floor while the item is selected: a bold
+ * band with a soft outer halo, drawn just above rug height so it stays visible
+ * when the piece stands on a rug.
+ */
 function Footprint({ item }: { item: Item }) {
   const w = cm(item.w) + 0.06, d = cm(item.d) + 0.06
-  const t = 0.02
-  const y = 0.003
+  const t = 0.035
+  const halo = 0.06
+  const y = 0.02
   if (item.kind === 'rug') {
     const R = w / 2
     return (
-      <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[R, R + t, 64]} />
-        <meshBasicMaterial color="#e5407a" depthWrite={false} toneMapped={false} />
-      </mesh>
+      <group position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh>
+          <ringGeometry args={[R, R + t, 64]} />
+          <meshBasicMaterial color="#e5407a" depthWrite={false} toneMapped={false} />
+        </mesh>
+        <mesh>
+          <ringGeometry args={[R + t, R + t + halo, 64]} />
+          <meshBasicMaterial color="#e5407a" transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+        </mesh>
+      </group>
     )
   }
-  const sides: [number, number, number, number][] = [
-    [0, -d / 2, w, t], [0, d / 2, w, t], [-w / 2, 0, t, d], [w / 2, 0, t, d],
+  const band = (ww: number, dd: number, tt: number): [number, number, number, number][] => [
+    [0, -dd / 2 + tt / 2, ww, tt], [0, dd / 2 - tt / 2, ww, tt], [-ww / 2 + tt / 2, 0, tt, dd - 2 * tt], [ww / 2 - tt / 2, 0, tt, dd - 2 * tt],
   ]
   return (
-    <>
-      {sides.map(([x, z, sx, sz], i) => (
-        <mesh key={i} position={[x, y, z]}>
+    <group position={[0, y, 0]}>
+      {band(w + 2 * t, d + 2 * t, t).map(([x, z, sx, sz], i) => (
+        <mesh key={i} position={[x, 0, z]}>
           <boxGeometry args={[sx, 0.004, sz]} />
           <meshBasicMaterial color="#e5407a" depthWrite={false} toneMapped={false} />
         </mesh>
       ))}
-    </>
+      {band(w + 2 * t + 2 * halo, d + 2 * t + 2 * halo, halo).map(([x, z, sx, sz], i) => (
+        <mesh key={`h${i}`} position={[x, -0.001, z]}>
+          <boxGeometry args={[sx, 0.004, sz]} />
+          <meshBasicMaterial color="#e5407a" transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
   )
 }

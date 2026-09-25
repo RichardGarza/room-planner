@@ -1,7 +1,7 @@
 import { Instance, Instances, RoundedBox } from '@react-three/drei'
 import type { ReactNode } from 'react'
 import type { Book } from './layout'
-import { Fabric, Metal, Painted, Plastic, useFx } from './materials'
+import { Bulb, Fabric, Metal, Painted, Plastic, useFx } from './materials'
 
 /* ----------------------------- shared primitives ---------------------------- */
 
@@ -144,16 +144,17 @@ export function Laptop({ at, yaw = 0.12 }: { at: V3; yaw?: number }) {
   )
 }
 
-/** Small desk lamp: weighted base, tilted stem, conical shade with a warm glow. */
+/** Small desk lamp: weighted base, tilted stem, conical shade that glows and lights the desk in the evening. */
 export function DeskLamp({ at, h = 0.42, color = '#f1e6d2' }: { at: V3; h?: number; color?: string }) {
   const stem = h - 0.14
   return (
     <group position={at}>
       <Cyl r={0.07} h={0.014} at={[0, 0.007, 0]}><Metal color="#3a3d42" roughness={0.4} /></Cyl>
       <Cyl r={0.007} h={stem} at={[0.03, 0.014 + stem / 2, 0]} rot={[0, 0, -0.18]} seg={8}><Metal color="#3a3d42" roughness={0.4} /></Cyl>
-      <Cyl r={0.09} r2={0.035} h={0.12} at={[0.09, h - 0.06, 0]} rot={[0, 0, -0.35]} open>
+      <Cyl r={0.09} r2={0.035} h={0.12} at={[0.09, h - 0.06, 0]} rot={[0, 0, -0.35]} open receive={false}>
         <Fabric color={color} glow="#ffd9a0" />
       </Cyl>
+      <Bulb at={[0.09, h - 0.08, 0]} />
     </group>
   )
 }
