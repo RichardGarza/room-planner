@@ -1,0 +1,274 @@
+import { useCallback, useRef, useState } from 'react'
+import { doorSwing, footprint, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
+import { useStore } from '../store'
+import type { Item, Room, Wall } from '../types'
+
+const M = 34 // margin around the room for labels (cm units in the viewBox)
+const PARK_H = 150
+
+export function FloorPlan() {
+  const room = useStore((s) => s.room)
+  const items = useStore((s) => s.items)
+  const selectedId = useStore((s) => s.selectedId)
+  const select = useStore((s) => s.select)
+  const dragTo = useStore((s) => s.dragTo)
+  const snapshot = useStore((s) => s.snapshot)
+  const view = useStore((s) => s.view)
+  const walkPose = useStore((s) => s.walkPose)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null)
+
+  const toRoom = useCallback((e: React.PointerEvent) => {
+    const svg = svgRef.current!
+    const pt = svg.createSVGPoint()
+    pt.x = e.clientX
+    pt.y = e.clientY
+    const p = pt.matrixTransform(svg.getScreenCTM()!.inverse())
+    return { x: p.x - M, y: p.y - M }
+  }, [])
+
+  const onDown = (e: React.PointerEvent, it: Item) => {
+    e.stopPropagation()
+    const p = toRoom(e)
+    select(it.id)
+    snapshot()
+    setDrag({ id: it.id, dx: it.x - p.x, dy: it.y - p.y })
+    ;(e.target as Element).setPointerCapture(e.pointerId)
+  }
+  const onMove = (e: React.PointerEvent) => {
+    if (!drag) return
+    const p = toRoom(e)
+    dragTo(drag.id, p.x + drag.dx, p.y + drag.dy)
+  }
+  const onUp = () => setDrag(null)
+
+  const W = room.w + M * 2
+  const H = room.d + M * 2 + PARK_H
+  const swing = doorSwing(room)
+  const sel = items.find((i) => i.id === selectedId)
+
+  return (
+    <svg
+      ref={svgRef}
+      className="plan"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMin meet"
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerDown={() => select(null)}
+    >
+      <defs>
+        <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="#b9b1a8" strokeWidth="1.5" />
+        </pattern>
+      </defs>
+      <g transform={`translate(${M} ${M})`}>
+        {/* floor */}
+        <rect x={0} y={0} width={room.w} height={room.d} fill="#fbf7f2" />
+        {/* wall tints */}
+        <rect x={-6} y={0} width={6} height={room.d} fill={room.wallColors.left} />
+        <rect x={room.w} y={0} width={6} height={room.d} fill={room.wallColors.right} />
+        {/* grid */}
+        {Array.from({ length: Math.floor(room.w / 50) }, (_, i) => (
+          <line key={`v${i}`} x1={(i + 1) * 50} y1={0} x2={(i + 1) * 50} y2={room.d} stroke="#ede6df" strokeWidth={0.6} />
+        ))}
+        {Array.from({ length: Math.floor(room.d / 50) }, (_, i) => (
+          <line key={`h${i}`} x1={0} y1={(i + 1) * 50} x2={room.w} y2={(i + 1) * 50} stroke="#ede6df" strokeWidth={0.6} />
+        ))}
+
+        {/* radiator */}
+        {(() => {
+          const r = wallStripRect(room, room.radiator.wall, room.radiator.offset, room.radiator.width, room.radiator.depth)
+          return <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="url(#hatch)" stroke="#a89f95" strokeWidth={0.8} />
+        })()}
+
+        {/* rug + solid items */}
+        {items.filter((i) => i.inRoom && i.kind === 'rug').map((it) => (
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
+        ))}
+        {items.filter((i) => i.inRoom && i.kind !== 'rug').map((it) => (
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
+        ))}
+
+        {/* door swing */}
+        <path d={arcPath(swing.hx, swing.hy, swing.r, swing.leafDir)} fill="none" stroke="#c9bfb4" strokeWidth={1} strokeDasharray="3 3" />
+        <line
+          x1={swing.hx}
+          y1={swing.hy}
+          x2={swing.hx + swing.leafDir(90)[0] * swing.r}
+          y2={swing.hy + swing.leafDir(90)[1] * swing.r}
+          stroke="#5c534b"
+          strokeWidth={2}
+        />
+
+        {/* walls */}
+        <rect x={0} y={0} width={room.w} height={room.d} fill="none" stroke="#3f3833" strokeWidth={6} />
+        {/* window */}
+        <Opening room={room} wall={room.window.wall} offset={room.window.offset} width={room.window.width} kind="window" />
+        {/* door opening */}
+        <Opening room={room} wall={room.door.wall} offset={room.door.offset} width={room.door.width} kind="door" />
+
+        {/* dimension lines for the selection */}
+        {sel && sel.inRoom && <DimLines item={sel} roomW={room.w} roomD={room.d} />}
+
+        {/* where you are standing in walk mode */}
+        {view === 'walk' && (
+          <g transform={`translate(${walkPose.x} ${walkPose.y})`} pointerEvents="none">
+            <path
+              d={`M 0 0 L ${-Math.sin(walkPose.yaw - 0.45) * 70} ${-Math.cos(walkPose.yaw - 0.45) * 70} A 70 70 0 0 1 ${-Math.sin(walkPose.yaw + 0.45) * 70} ${-Math.cos(walkPose.yaw + 0.45) * 70} Z`}
+              fill="#e5407a"
+              opacity={0.18}
+            />
+            <circle r={7} fill="#e5407a" stroke="#fff" strokeWidth={2} />
+          </g>
+        )}
+
+        {/* labels */}
+        <WallText room={room} wall={room.window.wall} t={room.window.offset + room.window.width / 2} text="WINDOW" />
+        <WallText room={room} wall={room.door.wall} t={room.door.offset + room.door.width / 2} text="DOOR" />
+        {(['top', 'bottom', 'left', 'right'] as const)
+          .filter((w) => w !== room.window.wall && w !== room.door.wall)
+          .map((w) => (
+            <WallText key={w} room={room} wall={w} t={(w === 'top' || w === 'bottom' ? room.w : room.d) / 2} text={w === 'left' ? 'LEFT WALL' : w === 'right' ? 'RIGHT WALL' : w === 'top' ? 'BACK WALL' : 'FRONT WALL'} />
+          ))}
+        <text x={room.w} y={room.d + 16} className="plan-dim" textAnchor="end">{room.w} cm</text>
+        <text transform={`translate(${room.w + 16} 6) rotate(90)`} className="plan-dim">{room.d} cm</text>
+
+        {/* parking strip */}
+        <g transform={`translate(0 ${room.d + 30})`}>
+          <rect x={0} y={0} width={room.w} height={PARK_H - 30} rx={6} fill="none" stroke="#d8d0c7" strokeWidth={1} strokeDasharray="4 4" />
+          <text x={room.w / 2} y={14} className="plan-label" textAnchor="middle">OUT OF THE ROOM</text>
+          {items.filter((i) => !i.inRoom).length === 0 && (
+            <text x={room.w / 2} y={(PARK_H - 30) / 2 + 4} className="plan-hint" textAnchor="middle">
+              Drag furniture here to take it out of the room
+            </text>
+          )}
+        </g>
+        {items.filter((i) => !i.inRoom).map((it) => (
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} muted />
+        ))}
+
+        {/* scale */}
+        <g transform={`translate(0 ${room.d + PARK_H + 8})`}>
+          <line x1={0} y1={0} x2={100} y2={0} stroke="#3f3833" strokeWidth={1.2} />
+          <line x1={0} y1={-3} x2={0} y2={3} stroke="#3f3833" strokeWidth={1.2} />
+          <line x1={100} y1={-3} x2={100} y2={3} stroke="#3f3833" strokeWidth={1.2} />
+          <text x={50} y={12} className="plan-dim" textAnchor="middle">1 m</text>
+        </g>
+      </g>
+    </svg>
+  )
+}
+
+function arcPath(hx: number, hy: number, r: number, leafDir: (deg: number) => [number, number]) {
+  const [x0, y0] = leafDir(0)
+  const [x1, y1] = leafDir(90)
+  // choose the sweep flag by checking which way the mid-angle point lies
+  const [mx, my] = leafDir(45)
+  const cross = (x0 * my - y0 * mx)
+  return `M ${hx + x0 * r} ${hy + y0 * r} A ${r} ${r} 0 0 ${cross > 0 ? 1 : 0} ${hx + x1 * r} ${hy + y1 * r}`
+}
+
+function Opening({ room, wall, offset, width, kind }: { room: Room; wall: Wall; offset: number; width: number; kind: 'window' | 'door' }) {
+  const [x0, y0] = wallPoint(room, wall, offset)
+  const [x1, y1] = wallPoint(room, wall, offset + width)
+  const horizontal = wall === 'top' || wall === 'bottom'
+  const rx = Math.min(x0, x1) - (horizontal ? 0 : 4)
+  const ry = Math.min(y0, y1) - (horizontal ? 4 : 0)
+  const rw = horizontal ? width : 8
+  const rh = horizontal ? 8 : width
+  if (kind === 'door') return <rect x={rx} y={ry} width={rw} height={rh} fill="#fbf7f2" />
+  const thirds = [1 / 3, 2 / 3].map((f) => wallPoint(room, wall, offset + width * f))
+  return (
+    <g>
+      <rect x={rx} y={ry} width={rw} height={rh} fill="#fff" stroke="#3f3833" strokeWidth={1} />
+      <line x1={x0} y1={y0} x2={x1} y2={y1} stroke="#8fb5d6" strokeWidth={2} />
+      {thirds.map(([tx, ty], i) => (
+        <line key={i} x1={tx - (horizontal ? 0 : 4)} y1={ty - (horizontal ? 4 : 0)} x2={tx + (horizontal ? 0 : 4)} y2={ty + (horizontal ? 4 : 0)} stroke="#3f3833" strokeWidth={1} />
+      ))}
+    </g>
+  )
+}
+
+function WallText({ room, wall, t, text }: { room: Room; wall: Wall; t: number; text: string }) {
+  const [x, y] = wallPoint(room, wall, t)
+  const { normal } = wallAxes(wall)
+  const ox = -normal[0] * 14, oy = -normal[1] * 14
+  const rot = wall === 'left' ? -90 : wall === 'right' ? 90 : 0
+  return (
+    <text transform={`translate(${x + ox} ${y + oy + (wall === 'top' ? 2 : wall === 'bottom' ? 4 : 0)}) rotate(${rot})`} className="plan-label" textAnchor="middle" dominantBaseline={rot ? 'middle' : undefined}>
+      {text}
+    </text>
+  )
+}
+
+function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boolean; onDown: (e: React.PointerEvent, it: Item) => void; muted?: boolean }) {
+  const { fw } = footprint(item)
+  const stroke = selected ? '#f28c28' : '#8f867d'
+  const fontSize = Math.min(11, Math.max(7, fw / 6))
+  return (
+    <g
+      className={`plan-item${selected ? ' selected' : ''}`}
+      transform={`translate(${item.x} ${item.y})`}
+      onPointerDown={(e) => onDown(e, item)}
+      opacity={muted ? 0.75 : 1}
+      style={{ cursor: 'grab' }}
+    >
+      <g transform={`rotate(${item.rot})`}>
+        {item.kind === 'rug' ? (
+          <circle r={item.w / 2} fill={item.color} opacity={0.55} stroke={stroke} strokeWidth={selected ? 2 : 0} />
+        ) : (
+          <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={item.d} rx={2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
+        )}
+        {item.kind === 'bed' && (
+          <>
+            <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={7} fill="#c9a78c" />
+            <rect x={-item.w / 2 + 12} y={-item.d / 2 + 14} width={item.w / 2 - 16} height={26} rx={4} fill="#fff" opacity={0.9} />
+            <rect x={4} y={-item.d / 2 + 14} width={item.w / 2 - 16} height={26} rx={4} fill="#fff" opacity={0.9} />
+          </>
+        )}
+        {item.kind === 'chair' && <circle r={item.w / 2 - 4} fill="none" stroke="#9a8f86" strokeWidth={1} />}
+        {(item.kind === 'wardrobe' || item.kind === 'dresser') && (
+          <line x1={0} y1={-item.d / 2} x2={0} y2={item.d / 2} stroke="#b7ada3" strokeWidth={0.8} />
+        )}
+      </g>
+      <text className="plan-item-name" textAnchor="middle" y={-1} fontSize={fontSize}>
+        {item.name.split(' ').slice(0, 2).join(' ')}
+      </text>
+      <text className="plan-item-dim" textAnchor="middle" y={fontSize} fontSize={fontSize * 0.7}>
+        {item.w}×{item.d}
+      </text>
+    </g>
+  )
+}
+
+function DimLines({ item, roomW, roomD }: { item: Item; roomW: number; roomD: number }) {
+  const r = rectOf(item)
+  const left = r.x0, right = roomW - r.x1, top = r.y0, bottom = roomD - r.y1
+  const cy = (r.y0 + r.y1) / 2
+  const cx = (r.x0 + r.x1) / 2
+  const horiz = left <= right ? { x1: 0, x2: r.x0, v: left } : { x1: r.x1, x2: roomW, v: right }
+  const vert = top <= bottom ? { y1: 0, y2: r.y0, v: top } : { y1: r.y1, y2: roomD, v: bottom }
+  return (
+    <g className="dims">
+      {horiz.v > 2 && (
+        <g>
+          <line x1={horiz.x1} y1={cy} x2={horiz.x2} y2={cy} stroke="#e5407a" strokeWidth={1.2} />
+          <circle cx={horiz.x1} cy={cy} r={1.8} fill="#e5407a" />
+          <circle cx={horiz.x2} cy={cy} r={1.8} fill="#e5407a" />
+          <rect x={(horiz.x1 + horiz.x2) / 2 - 15} y={cy - 12} width={30} height={10} rx={3} fill="#fff" stroke="#e5407a" strokeWidth={0.6} />
+          <text x={(horiz.x1 + horiz.x2) / 2} y={cy - 4.5} className="dim-text" textAnchor="middle">{Math.round(horiz.v)} cm</text>
+        </g>
+      )}
+      {vert.v > 2 && (
+        <g>
+          <line x1={cx} y1={vert.y1} x2={cx} y2={vert.y2} stroke="#e5407a" strokeWidth={1.2} />
+          <circle cx={cx} cy={vert.y1} r={1.8} fill="#e5407a" />
+          <circle cx={cx} cy={vert.y2} r={1.8} fill="#e5407a" />
+          <rect x={cx + 3} y={(vert.y1 + vert.y2) / 2 - 5} width={30} height={10} rx={3} fill="#fff" stroke="#e5407a" strokeWidth={0.6} />
+          <text x={cx + 18} y={(vert.y1 + vert.y2) / 2 + 2.5} className="dim-text" textAnchor="middle">{Math.round(vert.v)} cm</text>
+        </g>
+      )}
+    </g>
+  )
+}
