@@ -9,6 +9,7 @@ import { BoxItem } from './furniture/Boxes'
 import { Chair } from './furniture/Chair'
 import { Desk, Table } from './furniture/Desk'
 import { FxContext, type Fx } from './furniture/materials'
+import { PlantItem } from './furniture/Plant'
 import { RectRug, RoundRug } from './furniture/Rug'
 import { Bookcase, CubeShelf } from './furniture/Shelves'
 import { Sofa } from './furniture/Sofa'
@@ -81,6 +82,7 @@ function Piece({ item, stack }: { item: Item; stack: number }) {
     case 'sofa': return <Sofa item={item} />
     case 'rug': return <RoundRug item={item} stack={stack} />
     case 'rugRect': return <RectRug item={item} stack={stack} />
+    case 'plant': return <PlantItem item={item} />
     default: return <BoxItem item={item} />
   }
 }

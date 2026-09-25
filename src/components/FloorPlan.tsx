@@ -321,6 +321,8 @@ function PlanItem({ item, selected, onDown, toRoom, muted }: { item: Item; selec
           <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={item.d} rx={4} fill={item.color} opacity={0.55} stroke={stroke} strokeWidth={selected ? 2 : 0} />
         ) : item.kind === 'table' && item.w === item.d ? (
           <circle r={item.w / 2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
+        ) : item.kind === 'plant' ? (
+          <ellipse rx={item.w / 2} ry={item.d / 2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
         ) : (
           <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={item.d} rx={2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
         )}
@@ -356,6 +358,14 @@ function PlanItem({ item, selected, onDown, toRoom, muted }: { item: Item; selec
                 <rect key={i} x={-inner / 2 + (i * inner) / n + 2} y={y0 + 3} width={inner / n - 4} height={item.d - back - 8} rx={4} fill="#fff" opacity={0.35} stroke="#9a8f86" strokeWidth={0.6} />
               ))}
             </>
+          )
+        })()}
+        {item.kind === 'plant' && (() => {
+          const L = Math.min(item.w, item.d) * 0.55
+          return (
+            <g transform="rotate(-35)">
+              <path d={`M0,${-L / 2} Q${L * 0.42},0 0,${L / 2} Q${-L * 0.42},0 0,${-L / 2} Z M0,${-L / 2} L0,${L / 2}`} fill="#fff" fillOpacity={0.4} stroke="#3f6b3a" strokeWidth={1} strokeLinejoin="round" />
+            </g>
           )
         })()}
         {item.kind === 'table' && item.w !== item.d && (
