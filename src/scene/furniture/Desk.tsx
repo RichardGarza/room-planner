@@ -1,7 +1,7 @@
 import type { Item } from '../../types'
 import { cm } from '../util'
 import { deskLegs, isWoodTone, shade } from './layout'
-import { Metal, Oak, Surface, useFx } from './materials'
+import { Metal, Oak, Surface } from './materials'
 import { Box, Cyl, DeskLamp, Laptop, Legs, RBox } from './props'
 
 const TOP = 0.03
@@ -16,7 +16,6 @@ function LegMat({ color }: { color: string }) {
  * and/or closed laptop to sell the scale.
  */
 export function Desk({ item }: { item: Item }) {
-  const { fast } = useFx()
   const w = cm(item.w), d = cm(item.d), h = cm(item.h)
   const legH = h - TOP
   const panels = deskLegs(item.w) === 'panels'
@@ -33,12 +32,8 @@ export function Desk({ item }: { item: Item }) {
       ) : (
         <Legs w={w} d={d} h={legH} inset={0.05} r={0.02} taper={0.6}><LegMat color={item.color} /></Legs>
       )}
-      {!fast && (
-        <>
-          {w >= 1 && <Laptop at={[-w * 0.12, h, 0.03]} />}
-          {d >= 0.45 && <DeskLamp at={[w / 2 - 0.14, h, -d / 2 + 0.14]} h={Math.min(0.42, h * 0.55)} />}
-        </>
-      )}
+      {w >= 1 && <Laptop at={[-w * 0.12, h, 0.03]} />}
+      {d >= 0.45 && <DeskLamp at={[w / 2 - 0.14, h, -d / 2 + 0.14]} h={Math.min(0.42, h * 0.55)} />}
     </>
   )
 }
