@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { findPreset } from '../catalog'
 import { isAccessCheck, runChecks } from '../checks'
 import { makeEmptyRoom } from '../data'
-import { accessAllows, accessZones, areCompanions, closetClearance, doorSwing, faceZone, isRugKind, itemsGap, itemsIntersect, polygonIntersectsRect, polygonOf, polygonsIntersect, rectOf, wallStripRect } from '../geometry'
+import { accessAllows, accessZones, areCompanions, closetClearance, doorSwing, faceZone, isRugKind, itemsGap, itemsIntersect, polygonIntersectsRect, polygonOf, polygonsIntersect, rectDistance, rectOf, wallStripRect } from '../geometry'
 import { migrateDoc } from '../migrate'
 import { forestsRoom } from '../seeds'
-import { explainScore, MIN_GAP, suggestLayouts } from '../suggest'
-import type { Item, Layout, Rect, Room } from '../types'
+import { CLOSET_MARGIN, DOOR_MARGIN, DOOR_PREFER, explainScore, HEAD_DOOR_REACH, MIN_GAP, suggestLayouts } from '../suggest'
+import type { Item, Layout, Rect, Room, Wall } from '../types'
 
 /*
  * The quality bar for suggestions on three rooms. Every assertion here is computed from the
@@ -74,22 +74,53 @@ function inDoorSwing(room: Room, item: Item) {
   return false
 }
 
-/** How far an item's box stays from the quarter disc an in-swinging door sweeps (0 when it reaches into it). */
+/**
+ * How far an item's box stays from what an in-swinging door sweeps: the quarter disc (its arc
+ * every 5°) and the line the fully open leaf reaches (every 2 cm along it); 0 when it reaches in.
+ */
 function doorSwingDistance(room: Room, item: Item) {
   let best = Infinity
   const b = rectOf(item)
+  const to = (px: number, py: number) => Math.hypot(Math.max(b.x0 - px, 0, px - b.x1), Math.max(b.y0 - py, 0, py - b.y1))
   for (const door of room.doors) {
     if (door.swing === 'out') continue
     const { hx, hy, r, leafDir } = doorSwing(room, door)
     for (let deg = 0; deg <= 90; deg += 5) {
       const [dx, dy] = leafDir(deg)
-      for (let f = 0; f <= 1.001; f += 0.1) {
-        const px = hx + dx * r * f, py = hy + dy * r * f
-        best = Math.min(best, Math.hypot(Math.max(b.x0 - px, 0, px - b.x1), Math.max(b.y0 - py, 0, py - b.y1)))
-      }
+      for (let f = 0; f <= 1.001; f += 0.1) best = Math.min(best, to(hx + dx * r * f, hy + dy * r * f))
     }
+    const [ox, oy] = leafDir(90)
+    for (let t = 0; t <= r; t += 2) best = Math.min(best, to(hx + ox * t, hy + oy * t))
   }
   return best
+}
+
+/** How far an item's box stays from the closet doors' clearance strips (Infinity without closets). */
+function closetDistance(room: Room, item: Item) {
+  return Math.min(Infinity, ...room.closets.map((c) => rectDistance(rectOf(item), closetClearance(room, c).rect)))
+}
+
+/** How far an item's box stays from the 40 cm doorway strips. */
+function doorwayDistance(room: Room, item: Item) {
+  return Math.min(Infinity, ...room.doors.map((d) => rectDistance(rectOf(item), wallStripRect(room, d.wall, d.offset, d.width, 40))))
+}
+
+const HEAD_WALL: Record<number, Wall> = { 0: 'top', 90: 'right', 180: 'bottom', 270: 'left' }
+
+/** The wall a bed's headboard (its −d side) is against, or null when it is not against one. */
+function headWall(room: Room, bed: Item): Wall | null {
+  const r = rectOf(bed)
+  const wall = HEAD_WALL[bed.rot]
+  const on = { top: r.y0 <= 0.5, bottom: r.y1 >= room.d - 0.5, left: r.x0 <= 0.5, right: r.x1 >= room.w - 0.5 }[wall]
+  return on ? wall : null
+}
+
+/** The nearest a bed, or a nightstand at its head, comes to a doorway on the wall its head is against (Infinity when the head is elsewhere). */
+function headToDoorway(room: Room, bed: Item, solids: Item[]) {
+  const wall = headWall(room, bed)
+  if (!wall) return Infinity
+  const head = [bed, ...solids.filter((o) => o.kind === 'nightstand' && gap(o, bed) <= 5)]
+  return Math.min(Infinity, ...room.doors.filter((d) => d.wall === wall).flatMap((d) => head.map((h) => rectDistance(rectOf(h), wallStripRect(room, d.wall, d.offset, d.width, 40)))))
 }
 
 /** Pairs of solid pieces that do not belong together and stand closer than MIN_GAP. */
@@ -156,7 +187,12 @@ function pathFromDoor(room: Room, items: Item[], target: Item) {
   })
 }
 
-/** What every layout of every room must satisfy. */
+/**
+ * What every layout of every room must satisfy: the hard rules (inside the room, no red check,
+ * every drawer and door can open, nothing in the door swing or the closet clearance, nothing
+ * overlapping), and the margins the engine keeps for the pieces it places: DOOR_MARGIN from what
+ * the leaf sweeps, CLOSET_MARGIN from the closet clearance and the doorway strips.
+ */
 function expectSound(room: Room, items: Item[], layout: Layout) {
   const placed = apply(items, layout)
   const solids = solidsOf(placed)
@@ -170,6 +206,10 @@ function expectSound(room: Room, items: Item[], layout: Layout) {
     expect(blockedAccessStrips(it, solids).map((z) => z.face), `${it.id}'s access space is free in ${name}`).toEqual([])
     expect(inDoorSwing(room, it), `${it.id} out of the door swing in ${name}`).toBe(false)
     for (const closet of room.closets) expect(polygonIntersectsRect(polygonOf(it), closetClearance(room, closet).rect), `${it.id} out of the closet clearance in ${name}`).toBe(false)
+    if (it.locked) continue
+    expect(doorSwingDistance(room, it), `${it.id} keeps ${DOOR_MARGIN} cm from the door sweep and the open leaf in ${name}`).toBeGreaterThanOrEqual(DOOR_MARGIN - 0.01)
+    expect(closetDistance(room, it), `${it.id} keeps ${CLOSET_MARGIN} cm from the closet clearance in ${name}`).toBeGreaterThanOrEqual(CLOSET_MARGIN - 0.01)
+    expect(doorwayDistance(room, it), `${it.id} keeps ${CLOSET_MARGIN} cm from the doorway strip in ${name}`).toBeGreaterThanOrEqual(CLOSET_MARGIN - 0.01)
   }
   for (let a = 0; a < solids.length; a++) {
     for (let b = a + 1; b < solids.length; b++) {
@@ -221,13 +261,22 @@ describe("(a) Forest's Room", () => {
       const dresser = byId(placed, 'forest-dresser')
       expect(dresser.h).toBeLessThanOrEqual(room.windows[0].sill)
       expect(runChecks(room, placed).some((ch) => /Dresser (blocks|stands .* above)/.test(ch.text)), `dresser clear of the sill in ${l.name}`).toBe(false)
-      // recliner and side table sit together
+      // recliner and side table sit together — or, in a trade-off layout, the description owns up
       const recliner = byId(placed, 'forest-recliner'), side = byId(placed, 'forest-side')
       expect(recliner.inRoom && side.inRoom, `recliner and side table in the room in ${l.name}`).toBe(true)
       expect(areCompanions(recliner, side)).toBe(true)
-      expect(gap(recliner, side), `side table right beside the recliner in ${l.name}`).toBeLessThanOrEqual(5)
+      if (l.recommended) expect(gap(recliner, side), `side table right beside the recliner in ${l.name}`).toBeLessThanOrEqual(5)
+      else if (gap(recliner, side) > 5) expect(l.description, `${l.name} owns up to the side table away from the recliner`).toMatch(/side table could not go beside the recliner/)
       // a person can get from the door to the crib
       expect(pathFromDoor(room, placed, c), `a 60 cm path from the door to the crib in ${l.name}`).toBe(true)
+      // every layout offered passes the hard rules: everything in, nothing adrift without saying so
+      expect(placed.filter((i) => i.id !== 'forest-recliner-open').every((i) => i.inRoom), `everything placed in ${l.name}`).toBe(true)
+      for (const i of solids) {
+        if (['forest-crib', 'forest-recliner', 'forest-cabinet', 'forest-dresser', 'forest-changing'].includes(i.id)) continue
+        const r = rectOf(i)
+        const onWall = r.x0 <= 5 || r.y0 <= 5 || r.x1 >= room.w - 5 || r.y1 >= room.d - 5
+        if (!onWall) expect(l.description, `${l.name} owns up to the ${i.id} in the open`).toMatch(new RegExp(`${i.name.toLowerCase()} stands in the open`))
+      }
     }
   }
 
@@ -239,7 +288,7 @@ describe("(a) Forest's Room", () => {
     expect(layouts[0].description).toMatch(/drawers face the room|tall cabinet can open/)
   })
 
-  it('offers more than one arrangement, one of them the crib on the right wall by the window (the room as it is lived in)', () => {
+  it('recommends the crib on the right wall by the window (the room as it is lived in) and offers a trade-off on another wall', () => {
     const layouts = suggestLayouts(room, doc.items)
     expect(layouts.length).toBeGreaterThanOrEqual(2)
     const onRightWall = layouts.filter((l) => {
@@ -248,9 +297,31 @@ describe("(a) Forest's Room", () => {
       return r.x1 >= room.w - 0.5 && r.y0 <= 0.5 && c.rot === 90
     })
     expect(onRightWall.length, 'a layout with the crib along the right wall, up by the window wall').toBe(1)
+    expect(onRightWall[0].recommended, 'and it is the recommended one').toBe(true)
     // the room is too small for a walking gap everywhere: each layout says so rather than claiming a clear room
     for (const l of layouts) expectHonest(doc.items, l)
     expect(layouts[0].description).toMatch(/Tight fit: the /)
+    // the other layouts are trade-offs: the crib's head on another wall, everything still in and
+    // the description saying what gives (a tight fit, a side table away from the recliner, a hamper in the open)
+    const a = headWall(room, crib(apply(doc.items, layouts[0])))
+    for (const l of layouts.slice(1)) {
+      const c = crib(apply(doc.items, l))
+      expect(headWall(room, c), `${l.name} puts the crib on another wall`).not.toBe(a)
+      expect(l.description, `${l.name} says what the trade-off is`).toMatch(/Tight fit:|could not go beside|stands in the open/)
+      expect(l.recommended).toBeFalsy()
+    }
+  })
+
+  it('never pads with a layout that breaks a hard rule: asked for five, it offers only the ones that pass', () => {
+    const layouts = suggestLayouts(room, doc.items, { max: 5 })
+    expect(layouts.length).toBeLessThan(5)
+    expectForest(doc.items, layouts)
+    for (const l of layouts) {
+      const placed = apply(doc.items, l)
+      expect(runChecks(room, placed).filter((c) => c.level === 'bad' || isAccessCheck(c)), `no hard-rule check in ${l.name}`).toEqual([])
+      expect(pathFromDoor(room, placed, crib(placed)), `path from the door in ${l.name}`).toBe(true)
+      expect(l.description).not.toMatch(/did not fit|Watch out/)
+    }
   })
 
   it('keeps a locked crib exactly where it is and arranges around it', () => {
@@ -273,6 +344,33 @@ describe("(a) Forest's Room", () => {
       }
       expectHonest(items, l)
     }
+  })
+
+  it('with the crib locked, recommends the most open layout (the recliner on the front wall), not the bunched one', () => {
+    // the critic's repro: the recliner under the window packed four non-companion pairs under 45 cm
+    // (hamper 4.5 cm from the dresser, changing table 2.5 cm from the cabinet, dresser 38 cm from the
+    // side table, side table 43.5 cm from the recliner) yet was recommended over the recliner on the
+    // front wall with two. Openness wins now.
+    const items = doc.items.map((i) => (i.id === 'forest-crib' ? { ...i, locked: true } : i))
+    const layouts = suggestLayouts(room, items)
+    const pairs = layouts.map((l) => tightPairs(solidsOf(apply(items, l))))
+    const recliner = byId(apply(items, layouts[0]), 'forest-recliner')
+    expect(layouts[0].name).toMatch(/^A · Recliner against the front wall/)
+    expect(recliner.rot).toBe(180)
+    expect(rectOf(recliner).y1).toBeGreaterThanOrEqual(room.d - 0.5)
+    expect(pairs[0].length, 'the recommended layout has at most two tight pairs').toBeLessThanOrEqual(2)
+    for (let i = 1; i < layouts.length; i++) expect(pairs[0].length, `A is at least as open as ${layouts[i].name}`).toBeLessThanOrEqual(pairs[i].length)
+    // the bunched arrangement is still offered, as the packed alternative it is, and says so
+    const underWindow = layouts.find((l) => /Recliner under the window/.test(l.name))
+    expect(underWindow, 'the recliner under the window is offered as the alternative').toBeTruthy()
+    expect(tightPairs(solidsOf(apply(items, underWindow!))).length).toBeGreaterThan(pairs[0].length)
+    expect(underWindow!.description).toMatch(/Tight fit: .* \(and \d+ more\)/)
+    // and the crowding term is what decides it: the same pieces cost more the closer they stand
+    const { parts: a } = explainScore(room, apply(items, layouts[0]))
+    const { parts: b } = explainScore(room, apply(items, underWindow!))
+    const crowd = (parts: string[]) => Number(parts.find((p) => p.startsWith('crowding'))?.split(' ')[1] ?? 0)
+    expect(crowd(b)).toBeLessThan(crowd(a))
+    expect(crowd(a)).toBeLessThanOrEqual(-3 * pairs[0].length)
   })
 
   it('keeps the lock through a save, share link or import (migrateDoc keeps the flag)', () => {
@@ -343,6 +441,28 @@ describe('(b) a fresh 305 × 366 room with the starter basics plus a nightstand,
     expect(layouts[0].name).toMatch(/^A · Bed against the (left|right) wall/)
   })
 
+  it('keeps the small desk off the line the open door leaf reaches', () => {
+    // the critic's repro: the desk sat at x 100..200 on the front wall, its edge exactly on the open
+    // leaf's line (hinge x = 100), though 12 cm of slack existed before the dresser's walking gap
+    const layouts = suggestLayouts(room, items)
+    const door = room.doors[0]
+    const hinge = door.offset + door.width
+    expect(door.hinge).toBe('right')
+    expect(hinge).toBe(100)
+    for (const l of layouts) {
+      const placed = apply(items, l)
+      const desk = placed.find((i) => i.id === 'desk')!
+      expect(doorSwingDistance(room, desk), `desk keeps ${DOOR_MARGIN} cm from the open leaf in ${l.name}`).toBeGreaterThanOrEqual(DOOR_MARGIN)
+      // on the front wall to the right of the door: at least the margin past the leaf's line
+      if (desk.rot === 180 && rectOf(desk).y1 >= room.d - 0.5 && rectOf(desk).x0 >= hinge) expect(rectOf(desk).x0).toBeGreaterThanOrEqual(hinge + DOOR_MARGIN)
+    }
+    // the recommended layout uses the slack: the desk is off the line and the dresser keeps its walking gap
+    const a = apply(items, layouts[0])
+    const desk = a.find((i) => i.id === 'desk')!, dresser = a.find((i) => i.id === 'dresser')!
+    expect(rectOf(desk).x0).toBe(hinge + 12)
+    expect(gap(desk, dresser)).toBe(MIN_GAP)
+  })
+
   it('does not score layouts by how much furniture gathers round the bed', () => {
     for (const l of suggestLayouts(room, items)) {
       const { parts } = explainScore(room, apply(items, l))
@@ -392,11 +512,159 @@ describe('(c) a 400 × 500 bedroom with ten pieces', () => {
     }
   })
 
+  it('does not put the headboard on the door wall next to the door while other walls work', () => {
+    // the critic's repro: layout C had the queen bed's head on the door wall with a nightstand 20 cm
+    // from the open leaf's line, inside the 1 m door approach: walking in met the headboard
+    const layouts = suggestLayouts(room, items)
+    expect(layouts).toHaveLength(3)
+    for (const l of layouts) {
+      const placed = apply(items, l)
+      const bed = placed.find((i) => i.id === 'bed')!
+      expect(headToDoorway(room, bed, solidsOf(placed)), `no headboard within ${HEAD_DOOR_REACH} cm of the doorway in ${l.name}`).toBeGreaterThanOrEqual(HEAD_DOOR_REACH)
+    }
+    // the door wall is the front wall; none of the three puts the head there
+    expect(layouts.map((l) => headWall(room, apply(items, l).find((i) => i.id === 'bed')!))).not.toContain('bottom')
+    // that old layout C, scored: the headboard by the door costs it 10 points
+    const oldC = apply(items, {
+      id: 'c', name: 'C', description: '',
+      placements: {
+        bed: { x: 245, y: 394, rot: 180, inRoom: true }, ns1: { x: 140, y: 480, rot: 180, inRoom: true }, ns2: { x: 350, y: 480, rot: 180, inRoom: true },
+        dresser: { x: 320, y: 24, rot: 0, inRoom: true }, pax: { x: 50, y: 29, rot: 0, inRoom: true }, desk: { x: 370, y: 170, rot: 90, inRoom: true },
+        chair: { x: 332, y: 170, rot: 270, inRoom: true }, armchair: { x: 43, y: 360, rot: 270, inRoom: true }, side: { x: 26, y: 295, rot: 270, inRoom: true },
+        rug: { x: 200, y: 250, rot: 0, inRoom: true },
+      },
+    })
+    const bed = oldC.find((i) => i.id === 'bed')!, ns1 = oldC.find((i) => i.id === 'ns1')!
+    expect(headWall(room, bed)).toBe('bottom')
+    expect(doorSwingDistance(room, ns1)).toBe(20)
+    expect(headToDoorway(room, bed, solidsOf(oldC))).toBe(20)
+    expect(explainScore(room, oldC).parts).toContain('headboard by the door -10')
+  })
+
   it('is deterministic and keeps parked pieces parked', () => {
     const parked: Item = { ...preset('bean-bag', 'bag'), inRoom: false, x: 60, y: 590 }
     const a = suggestLayouts(room, [...items, parked])
     const b = suggestLayouts(room, [...items, parked])
     expect(a).toEqual(b)
     for (const l of a) expect(l.placements.bag).toEqual({ x: 60, y: 590, rot: 0, inRoom: false })
+  })
+})
+
+describe('the refinements after the first review', () => {
+  const box = (id: string, x: number, y = 20): Item => ({ id, name: id, kind: 'box', w: 60, d: 40, h: 50, x, y, rot: 0, color: '#ffffff', inRoom: true })
+  const crowd = (parts: string[]) => Number(parts.find((p) => p.startsWith('crowding'))?.split(' ')[1] ?? 0)
+
+  it('1. crowding costs 3 points for a pair just under the walking gap, rising to 8 for a pair touching', () => {
+    const room = makeEmptyRoom('Plain', 400, 400)
+    // two boxes on the back wall, 60 wide: centres 104 apart leave 44 cm between them
+    expect(gap(box('a', 30), box('b', 134))).toBe(44)
+    expect(crowd(explainScore(room, [box('a', 30), box('b', 134)]).parts)).toBe(-3.1)
+    expect(gap(box('a', 30), box('b', 110))).toBe(20)
+    expect(crowd(explainScore(room, [box('a', 30), box('b', 110)]).parts)).toBe(-5.8)
+    expect(gap(box('a', 30), box('b', 90))).toBe(0)
+    expect(crowd(explainScore(room, [box('a', 30), box('b', 90)]).parts)).toBe(-8)
+    // a full walking gap costs nothing
+    expect(gap(box('a', 30), box('b', 135))).toBe(45)
+    expect(crowd(explainScore(room, [box('a', 30), box('b', 135)]).parts)).toBe(0)
+    // and a pair with the seating counts one and a half times, with a bed double
+    const sofa: Item = { ...preset('armchair', 'sofa'), x: 40, y: 42.5 }
+    expect(gap(sofa, box('b', 110, 20))).toBe(0)
+    expect(crowd(explainScore(room, [sofa, box('b', 110, 20)]).parts)).toBe(-12)
+    const bed: Item = { ...preset('single-bed', 'bed'), x: 45, y: 100 }
+    expect(gap(bed, box('b', 120, 20))).toBe(0)
+    expect(crowd(explainScore(room, [bed, box('b', 120, 20)]).parts)).toBe(-16)
+  })
+
+  it("4. keeps the pieces off the closet clearance and doorway strips in Forest's Room by 5 cm, not 0.5", () => {
+    // the critic's repro: hamper x1 = 306.5 beside a strip starting at 306, recliner x1 = 306, dresser y1 = 147.5 against y0 = 147
+    const doc = forestsRoom()
+    const room = doc.room
+    const strip = closetClearance(room, room.closets[0]).rect
+    expect(strip.x0).toBe(306)
+    expect(strip.y0).toBe(147)
+    for (const locked of [false, true]) {
+      const items = doc.items.map((i) => (locked && i.id === 'forest-crib' ? { ...i, locked: true } : i))
+      for (const l of suggestLayouts(room, items)) {
+        for (const it of solidsOf(apply(items, l))) {
+          if (it.locked) continue
+          const r = rectOf(it)
+          // anything beside the strip (sharing its y span) stops at least 5 cm short of x = 306
+          if (r.y1 > strip.y0 + 0.5 && r.y0 < strip.y1 - 0.5) expect(r.x1, `${it.id} beside the closet strip in ${l.name}`).toBeLessThanOrEqual(strip.x0 - CLOSET_MARGIN)
+          // anything above it (sharing its x span) stops at least 5 cm short of y = 147
+          if (r.x1 > strip.x0 + 0.5 && r.x0 < strip.x1 - 0.5) expect(r.y1, `${it.id} above the closet strip in ${l.name}`).toBeLessThanOrEqual(strip.y0 - CLOSET_MARGIN)
+          expect(closetDistance(room, it)).toBeGreaterThanOrEqual(CLOSET_MARGIN)
+          expect(doorwayDistance(room, it)).toBeGreaterThanOrEqual(CLOSET_MARGIN)
+        }
+      }
+    }
+  })
+
+  it('3. puts the headboard on the door wall only when no other wall works, and says so in the score', () => {
+    // bi-fold closets on the other three walls: the double bed only fits with its head on the door wall
+    const room: Room = {
+      ...makeEmptyRoom('Boxed', 400, 360, 260),
+      windows: [],
+      doors: [{ id: 'd1', wall: 'bottom', offset: 310, width: 70, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
+      closets: [
+        { id: 'c-top', wall: 'top', offset: 0, width: 400, depth: 60, doors: 'bifold' },
+        { id: 'c-left', wall: 'left', offset: 0, width: 360, depth: 60, doors: 'bifold' },
+        { id: 'c-right', wall: 'right', offset: 0, width: 300, depth: 60, doors: 'bifold' },
+      ],
+    }
+    const items = [preset('double-bed', 'bed'), preset('nightstand-40', 'ns')]
+    const layouts = suggestLayouts(room, items)
+    expect(layouts.length).toBeGreaterThanOrEqual(1)
+    const placed = apply(items, layouts[0])
+    expectSound(room, items, layouts[0])
+    const bed = placed.find((i) => i.id === 'bed')!, ns = placed.find((i) => i.id === 'ns')!
+    expect(headWall(room, bed)).toBe('bottom')
+    expect(headToDoorway(room, bed, solidsOf(placed))).toBeLessThan(HEAD_DOOR_REACH)
+    expect(explainScore(room, placed).parts).toContain('headboard by the door -10')
+    // the bed keeps its walking gap from the sweep, the nightstand the margin from the open leaf's line
+    expect(doorSwingDistance(room, bed)).toBeGreaterThanOrEqual(MIN_GAP)
+    expect(doorSwingDistance(room, ns)).toBeGreaterThanOrEqual(DOOR_MARGIN)
+    expect(gap(ns, bed)).toBeLessThanOrEqual(1)
+  })
+
+  it('2. never lets a piece stand within 10 cm of the door sweep or the open leaf, and leaves 20 when it can', () => {
+    // sliding closets on the other three walls: the wide dresser can only stand on the door wall, to the right of the door
+    const room: Room = {
+      ...makeEmptyRoom('Door', 340, 300, 260),
+      windows: [],
+      doors: [{ id: 'd1', wall: 'bottom', offset: 20, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
+      closets: [
+        { id: 'c-top', wall: 'top', offset: 0, width: 340, depth: 60, doors: 'sliding' },
+        { id: 'c-left', wall: 'left', offset: 0, width: 300, depth: 60, doors: 'sliding' },
+        { id: 'c-right', wall: 'right', offset: 0, width: 300, depth: 60, doors: 'sliding' },
+      ],
+    }
+    const leaf = 100 // the open leaf's line: hinge at offset + width
+    const rightStrip = closetClearance(room, room.closets[2]).rect
+    expect(rightStrip.x0).toBe(300)
+    const items = [preset('dresser-wide-6', 'dresser')]
+    const [layout] = suggestLayouts(room, items)
+    expect(layout).toBeTruthy()
+    expectSound(room, items, layout)
+    const dresser = apply(items, layout)[0]
+    const r = rectOf(dresser)
+    expect(dresser.rot).toBe(180)
+    expect(r.y1).toBe(room.d)
+    // room for the preferred 20 cm past the line (x 120..280 leaves 20 to the closet strip's margin), so it takes it
+    expect(r.x0).toBeGreaterThanOrEqual(leaf + DOOR_PREFER)
+    expect(r.x1).toBeLessThanOrEqual(rightStrip.x0 - CLOSET_MARGIN)
+    expect(doorSwingDistance(room, dresser)).toBeGreaterThanOrEqual(DOOR_PREFER)
+    // with the room 20 cm narrower only 5 cm of slack is left between the two margins (x 110 to 115), and the dresser stays inside them
+    const tight: Room = { ...room, w: 320, closets: room.closets.map((c) => (c.wall === 'top' ? { ...c, width: 320 } : c)) }
+    const [tightLayout] = suggestLayouts(tight, items)
+    expect(tightLayout).toBeTruthy()
+    expectSound(tight, items, tightLayout)
+    const t = rectOf(apply(items, tightLayout)[0])
+    expect(t.x0).toBeGreaterThanOrEqual(leaf + DOOR_MARGIN)
+    expect(t.x1).toBeLessThanOrEqual(280 - CLOSET_MARGIN)
+    expect(t.x0).toBeLessThanOrEqual(leaf + DOOR_MARGIN + 5)
+    // and 10 cm narrower again it no longer fits at all: left out rather than pushed onto the leaf's line
+    const tighter: Room = { ...room, w: 310, closets: room.closets.map((c) => (c.wall === 'top' ? { ...c, width: 310 } : c)) }
+    const [noFit] = suggestLayouts(tighter, items)
+    expect(noFit.placements.dresser.inRoom).toBe(false)
   })
 })
