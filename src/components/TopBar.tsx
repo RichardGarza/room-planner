@@ -192,6 +192,7 @@ export function TopBar() {
               <li><kbd>R</kbd> rotates the selected item, <kbd>⇧R</kbd> the other way.</li>
               <li><kbd>⌫</kbd> takes it out of the room, <kbd>Esc</kbd> deselects.</li>
               <li>Walk mode: drag to look around, <kbd>W A S D</kbd> or arrows to move.</li>
+              <li><kbd>F</kbd> toggles 2D / 3D focus; drag the divider for any split.</li>
               <li>Changes save by themselves; <kbd>⌘S</kbd> saves right away.</li>
               <li>Share copies a link that holds your exact layout.</li>
             </ul>

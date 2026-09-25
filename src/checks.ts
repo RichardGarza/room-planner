@@ -147,6 +147,8 @@ export function runChecks(room: Room, items: Item[]): Check[] {
     const br = rectOf(bed)
     for (const it of solid) {
       if (it === bed) continue
+      // nightstands are meant to sit right beside the bed
+      if (it.kind === 'nightstand') continue
       const g = gapBetween(br, rectOf(it))
       if (!g || g.gap < 0 || g.gap > 120) continue
       const gap = Math.round(g.gap)
