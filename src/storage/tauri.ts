@@ -1,5 +1,5 @@
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { BaseDirectory, exists, mkdir, readDir, readTextFile, remove, writeTextFile } from '@tauri-apps/plugin-fs'
+import { BaseDirectory, exists, mkdir, readDir, readTextFile, remove, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { migrateDoc } from '../migrate'
 import type { RoomDoc, RoomSummary } from '../types'
 import { summarize, type RoomStorage } from './types'
@@ -194,6 +194,24 @@ export class TauriFsBackend implements RoomStorage {
       await writeTextFile(path, JSON.stringify(doc, null, 2))
     } catch (err) {
       throw new Error(`Could not export "${doc.name}" to ${path}: ${describe(err)}`)
+    }
+  }
+
+  async saveFile(name: string, data: Uint8Array, mime: string): Promise<void> {
+    const ext = name.split('.').pop() || 'bin'
+    const label = mime === 'application/pdf' ? 'PDF' : ext.toUpperCase()
+    let path: string | null
+    try {
+      path = await save({ defaultPath: name, filters: [{ name: label, extensions: [ext] }] })
+    } catch (err) {
+      throw new Error(`Could not open the save dialog: ${describe(err)}`)
+    }
+    if (!path) return
+    try {
+      // The dialog plugin adds the chosen path to the fs scope, so an absolute path is allowed here.
+      await writeFile(path, data)
+    } catch (err) {
+      throw new Error(`Could not save ${baseName(path)}: ${describe(err)}`)
     }
   }
 

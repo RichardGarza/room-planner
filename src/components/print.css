@@ -1,0 +1,49 @@
+/* Print / PDF: the button in the plan pane header, the dialog, and the print-only page root. Uses the variables from index.css. */
+
+.pane-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.print-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: #f1ece6; font-weight: 800; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.print-btn:hover { color: var(--ink); background: #e7e0d8; }
+
+/* dialog */
+.print-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(47, 42, 38, 0.42); display: grid; place-items: center; padding: 20px; }
+.print-dialog { width: min(980px, 100%); height: min(700px, 100%); background: var(--panel); border-radius: var(--radius); box-shadow: 0 18px 60px rgba(40, 25, 20, 0.28); display: grid; grid-template-columns: 272px minmax(0, 1fr); overflow: hidden; }
+.print-side { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; border-right: 1px solid var(--line); min-height: 0; overflow-y: auto; }
+.print-head { display: flex; align-items: center; justify-content: space-between; }
+.print-head h3 { font-size: 16px; font-weight: 900; }
+.print-opt h4 { margin-bottom: 5px; }
+.print-choices { display: flex; flex-direction: column; gap: 6px; }
+.print-choice { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 10px; border: 1.5px solid var(--line); background: #fff; }
+.print-choice:hover { border-color: #d8d0c7; }
+.print-choice.on { border-color: var(--pink); background: #fff8fa; }
+.print-choice strong { font-size: 12.5px; font-weight: 800; }
+.print-choice span { font-size: 11px; color: var(--muted); line-height: 1.35; }
+.print-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: #f1ece6; align-self: flex-start; }
+.print-seg button { padding: 4px 11px; border-radius: 999px; font-weight: 800; font-size: 11px; color: var(--muted); }
+.print-seg button:hover { color: var(--ink); }
+.print-seg button.on { background: #2f2a26; color: #fff; }
+.print-note { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.4; }
+.print-note.warn { color: var(--warn); font-weight: 700; }
+.print-note.bad { color: var(--bad); font-weight: 700; }
+.print-note.ok { color: var(--ok); font-weight: 700; }
+.print-note.info { color: var(--ink); }
+.print-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 6px; }
+.print-actions .chip:disabled { opacity: 0.5; cursor: default; }
+.print-main { background: #e9e3dc; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.print-preview { flex: 1; min-height: 0; padding: 18px; display: grid; place-items: center; overflow: hidden; }
+.print-preview svg { max-width: 100%; max-height: 100%; width: auto; height: auto; background: #fff; box-shadow: 0 8px 26px rgba(40, 25, 20, 0.22); }
+.print-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px 12px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.print-pager .chip { padding: 2px 10px; font-size: 14px; }
+.print-pager .chip:disabled { opacity: 0.35; cursor: default; }
+
+/* the print-only page root (mounted by the dialog while printing) */
+#print-root { display: none; }
+
+@media print {
+  html, body, #root { height: auto !important; overflow: visible !important; }
+  body { background: #fff !important; }
+  body > *:not(#print-root) { display: none !important; }
+  #print-root { display: block !important; }
+  .print-page { overflow: hidden; break-after: page; page-break-after: always; }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
+  .print-page svg { display: block; }
+}

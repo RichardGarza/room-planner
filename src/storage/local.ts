@@ -56,6 +56,16 @@ export class LocalStorageBackend implements RoomStorage {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  async saveFile(name: string, data: Uint8Array, mime: string) {
+    const blob = new Blob([data as BlobPart], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
   async importDoc() {
     return new Promise<RoomDoc | null>((resolve) => {
       const input = document.createElement('input')

@@ -15,6 +15,8 @@ export interface RoomStorage {
   exportDoc?(doc: RoomDoc): Promise<void>
   /** Optional: let the user pick a JSON file to import; resolves null when cancelled. */
   importDoc?(): Promise<RoomDoc | null>
+  /** Optional: hand the user a binary file such as a PDF (native save dialog in Tauri, download in the browser). Resolves silently when cancelled. */
+  saveFile?(name: string, data: Uint8Array, mime: string): Promise<void>
 }
 
 export function summarize(doc: RoomDoc): RoomSummary {
