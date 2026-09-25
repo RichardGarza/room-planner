@@ -37,6 +37,7 @@ export function OutsideCamera({ room, locked }: { room: Room; locked: boolean })
 export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
+  const invalidate = useThree((s) => s.invalidate)
   const keys = useRef<Set<string>>(new Set())
   const walkHeight = useStore((s) => s.walkHeight)
 
@@ -50,9 +51,10 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       last = { x: e.clientX, y: e.clientY }
       const p = useStore.getState().walkPose
       useStore.getState().setWalkPose({ yaw: p.yaw - dx * 0.004, pitch: THREE.MathUtils.clamp(p.pitch - dy * 0.004, -1.2, 1.2) })
+      invalidate()
     }
     const up = () => { last = null }
-    const kd = (e: KeyboardEvent) => { if ((e.target as HTMLElement).tagName !== 'INPUT') keys.current.add(e.key.toLowerCase()) }
+    const kd = (e: KeyboardEvent) => { if ((e.target as HTMLElement).tagName !== 'INPUT') { keys.current.add(e.key.toLowerCase()); invalidate() } }
     const ku = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase())
     el.addEventListener('pointerdown', down)
     el.addEventListener('pointermove', move)
@@ -66,7 +68,10 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       window.removeEventListener('keydown', kd)
       window.removeEventListener('keyup', ku)
     }
-  }, [gl])
+  }, [gl, invalidate])
+
+  // The canvas renders on demand: a walk preset or eye-height change must request a frame.
+  useEffect(() => useStore.subscribe((s, prev) => { if (s.walkPose !== prev.walkPose || s.walkHeight !== prev.walkHeight) invalidate() }), [invalidate])
 
   useFrame((_, dt) => {
     const st = useStore.getState()
@@ -96,6 +101,7 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       if (!blocked(nx, y)) x = nx
       if (!blocked(x, ny)) y = ny
       if (x !== p.x || y !== p.y) st.setWalkPose({ x, y })
+      invalidate() // keep walking while a key is held (the canvas renders on demand)
     }
     const eye = walkHeight === 'adult' ? 1.62 : 1.08
     camera.position.set(cm(x), eye, cm(y))

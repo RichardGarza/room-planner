@@ -1,44 +1,37 @@
-import * as THREE from 'three'
-import { useEffect, useMemo } from 'react'
+import { useLayoutEffect, useMemo } from 'react'
+import { useStore } from '../store'
 import type { Room } from '../types'
-import { cm, shadeColor } from './util'
+import { plankMaps } from './textures'
+import { cm } from './util'
 
 /* ---------------------------------- floor --------------------------------- */
 
-export function useFloorTexture(color: string) {
-  return useMemo(() => {
-    const c = document.createElement('canvas')
-    c.width = 512
-    c.height = 512
-    const g = c.getContext('2d')!
-    g.fillStyle = color
-    g.fillRect(0, 0, 512, 512)
-    const plank = 64
-    for (let row = 0; row < 512 / plank; row++) {
-      const offset = (row % 2) * 160
-      for (let x = -256; x < 512; x += 256) {
-        const shade = 0.85 + ((row * 7 + x) % 5) * 0.06
-        g.fillStyle = shadeColor(color, shade)
-        g.fillRect(x + offset, row * plank, 256 - 3, plank - 3)
-      }
-    }
-    const t = new THREE.CanvasTexture(c)
-    t.wrapS = t.wrapT = THREE.RepeatWrapping
-    t.colorSpace = THREE.SRGBColorSpace
-    return t
-  }, [color])
+/** Oak planks tinted by the room's floor colour, 12 × 120 cm, running front to back. */
+export function useFloorMaps(color: string, detail: 'best' | 'fast', W: number, D: number) {
+  const maps = useMemo(() => plankMaps(color, detail), [color, detail])
+  useLayoutEffect(() => {
+    for (const t of [maps.map, maps.normalMap, maps.roughnessMap]) t.repeat.set(W / maps.tile[0], D / maps.tile[1])
+  }, [maps, W, D])
+  return maps
 }
 
-
 export function Floor({ room, onDrag, onDrop }: { room: Room; onDrag?: (x: number, y: number) => void; onDrop: () => void }) {
+  const quality = useStore((s) => s.quality)
   const W = cm(room.w), D = cm(room.d)
-  const tex = useFloorTexture(room.floorColor)
-  useEffect(() => { tex.repeat.set(W / 1.6, D / 1.6) }, [tex, W, D])
+  const maps = useFloorMaps(room.floorColor, quality, W, D)
   return (
     <>
       <mesh position={[W / 2, 0, D / 2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[W, D]} />
-        <meshStandardMaterial map={tex} roughness={0.55} />
+        <meshStandardMaterial
+          map={maps.map}
+          normalMap={maps.normalMap}
+          normalScale={quality === 'best' ? [0.9, 0.9] : [0.6, 0.6]}
+          roughnessMap={maps.roughnessMap}
+          roughness={1}
+          metalness={0}
+          envMapIntensity={0.7}
+        />
       </mesh>
       {/* invisible drag catcher */}
       {onDrag && (
