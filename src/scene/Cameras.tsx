@@ -34,9 +34,27 @@ export function OutsideCamera({ room, locked }: { room: Room; locked: boolean })
   return <OrbitControls ref={controls} makeDefault enabled={!locked} target={target} maxPolarAngle={Math.PI / 2 - 0.05} minDistance={1.5} maxDistance={14} enableDamping dampingFactor={0.12} />
 }
 
+/** First-person field of view: wide enough to feel like standing in the room, not peering through a lens. */
+const WALK_FOV = 75
+
 export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
+  const invalidateView = useThree((s) => s.invalidate)
+
+  // widen the lens while walking; the outside camera keeps its narrower view
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera
+    const previous = cam.fov
+    cam.fov = WALK_FOV
+    cam.updateProjectionMatrix()
+    invalidateView()
+    return () => {
+      cam.fov = previous
+      cam.updateProjectionMatrix()
+      invalidateView()
+    }
+  }, [camera, invalidateView])
   const invalidate = useThree((s) => s.invalidate)
   const keys = useRef<Set<string>>(new Set())
   const walkHeight = useStore((s) => s.walkHeight)
