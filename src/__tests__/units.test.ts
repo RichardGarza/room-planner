@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { feetInchesText, formatLength, formatRoomSize, formatSize, inchesText, parseLength, toUnitNumber } from '../units'
+import { feetInchesText, formatLength, formatRoomDims, formatRoomSize, formatSize, inchesText, parseLength, toUnitNumber } from '../units'
 
 const cm = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100)
 
@@ -67,5 +67,15 @@ describe('formatting', () => {
     expect(toUnitNumber(137, 'in')).toBe(54)
     expect(toUnitNumber(16.51, 'in')).toBe(6.5)
     expect(toUnitNumber(137.4, 'cm')).toBe(137)
+  })
+  it('drops the unit or the spaces for compact labels', () => {
+    expect(formatSize(137, 76, 89, { unit: 'in', bare: true })).toBe('54 × 30 × 35')
+    expect(formatSize(137, 76, 89, { unit: 'in', bare: true, compact: true })).toBe('54×30×35')
+    expect(formatSize(70, 130, 90, { unit: 'cm', bare: true, compact: true })).toBe('70×130×90')
+  })
+  it('shows a room with its height', () => {
+    expect(formatRoomDims(358, 295, 244, { unit: 'cm' })).toBe('358 × 295 × 244 cm')
+    expect(formatRoomDims(358, 295, 244, { unit: 'in' })).toBe('11′ 9″ × 9′ 8″ × 8′')
+    expect(formatRoomDims(270, 370, 260, { unit: 'in' })).toBe('8′ 10½″ × 12′ 1½″ × 8′ 6½″')
   })
 })

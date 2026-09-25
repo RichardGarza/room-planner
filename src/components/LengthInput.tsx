@@ -1,6 +1,18 @@
 import { useEffect, useState } from 'react'
 import { parseLength, toUnitNumber, useUnits } from '../units'
 
+/** Small "cm | in" segmented control; every length in the app follows it at once. */
+export function UnitToggle({ className }: { className?: string }) {
+  const unit = useUnits((s) => s.unit)
+  const setUnit = useUnits((s) => s.setUnit)
+  return (
+    <div className={`seg sub unit-toggle${className ? ` ${className}` : ''}`} role="group" aria-label="Units">
+      <button type="button" className={unit === 'cm' ? 'on' : ''} aria-pressed={unit === 'cm'} onClick={() => setUnit('cm')} title="Show lengths in centimetres">cm</button>
+      <button type="button" className={unit === 'in' ? 'on' : ''} aria-pressed={unit === 'in'} onClick={() => setUnit('in')} title="Show lengths in inches and feet">in</button>
+    </div>
+  )
+}
+
 interface Props {
   /** value in cm */
   value: number

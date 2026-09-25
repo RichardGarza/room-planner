@@ -3,6 +3,8 @@ import { presetLayouts } from '../data'
 import { useLibrary } from '../library'
 import { useStore } from '../store'
 import type { Layout } from '../types'
+import { formatRoomSize, useUnits } from '../units'
+import { UnitToggle } from './LengthInput'
 import './suggest.css'
 
 const HINT_KEY = 'room-planner.hint.suggestions'
@@ -31,6 +33,7 @@ export function TopBar() {
   const error = useLibrary((s) => s.error)
   const close = useLibrary((s) => s.close)
   const rename = useLibrary((s) => s.rename)
+  const unit = useUnits((s) => s.unit)
   const [toast, setToast] = useState<string | null>(null)
   const [help, setHelp] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -81,7 +84,7 @@ export function TopBar() {
   }
 
   const tab = (l: Layout) => (
-    <button key={l.id} className={`tab${l.id === activeLayoutId ? ' on' : ''}`} title={`${l.name} — ${l.description}`} onClick={() => applyLayout(l)}>
+    <button key={l.id} className={`tab${l.id === activeLayoutId ? ' on' : ''}`} title={l.description ? `${l.name} — ${l.description}` : l.name} onClick={() => applyLayout(l)}>
       <span className="tab-text">{l.name}</span>
       {l.recommended && <span className="badge">Recommended</span>}
     </button>
@@ -137,7 +140,9 @@ export function TopBar() {
             )}
             {summary?.group && <span className="group-chip">{summary.group}</span>}
           </div>
-          <div className="room-sub">{room.w} × {room.d} cm{room.subtitle ? ` · ${room.subtitle}` : ''}</div>
+          <div className="room-sub" title={`${formatRoomSize(room.w, room.d, { unit })}${room.subtitle ? ` · ${room.subtitle}` : ''}`}>
+            {formatRoomSize(room.w, room.d, { unit })}{room.subtitle ? ` · ${room.subtitle}` : ''}
+          </div>
         </div>
       </div>
       <div className="tabs-wrap">
@@ -164,19 +169,18 @@ export function TopBar() {
               )}
             </nav>
           </div>
-          <span className="tab-divider" aria-hidden="true" />
-          <div className="tab-group">
-            <span className="tab-label">Your layouts</span>
-            <nav className="tabs">
-              {yours.length === 0 ? (
-                <span className="tab empty" title="Arrange the room, then save it under “My layouts” in the sidebar">None saved yet</span>
-              ) : (
-                yours.map(tab)
-              )}
-            </nav>
-          </div>
+          {yours.length > 0 && (
+            <>
+              <span className="tab-divider" aria-hidden="true" />
+              <div className="tab-group">
+                <span className="tab-label">Your layouts</span>
+                <nav className="tabs">{yours.map(tab)}</nav>
+              </div>
+            </>
+          )}
         </div>
         <span className={`save-state ${status}`} title={error ?? undefined}>{saveText}</span>
+        <UnitToggle />
       </div>
       <div className="actions">
         <button className="icon" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">↶</button>
