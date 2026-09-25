@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
 import { clamp, footprint, wallLength } from './geometry'
-import type { Item, ItemPlacement, Layout, Room, Rot } from './types'
+import type { Item, ItemPlacement, Layout, Room, RoomDoc, Rot } from './types'
 
 export type ViewMode = 'outside' | 'walk'
 export type OutsideAngle = 'corner' | 'above' | 'window' | 'door'
@@ -65,21 +65,10 @@ interface State extends Settings {
   walkTo: (preset: WalkPreset) => void
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void
   shareUrl: () => string
-}
-
-const SAVED_KEY = 'room-planner.savedLayouts'
-
-function loadSaved(): Layout[] {
-  try {
-    const raw = localStorage.getItem(SAVED_KEY)
-    return raw ? (JSON.parse(raw) as Layout[]) : []
-  } catch {
-    return []
-  }
-}
-
-function persistSaved(layouts: Layout[]) {
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(layouts)) } catch { /* ignore */ }
+  /** Replace the whole planner state with a stored document (used by the room library). */
+  hydrate: (doc: RoomDoc) => void
+  /** The parts of the planner state that belong in the stored document. */
+  docState: () => Pick<RoomDoc, 'room' | 'items' | 'layouts' | 'settings'>
 }
 
 function applyPlacements(items: Item[], placements: Record<string, ItemPlacement>): Item[] {
@@ -181,7 +170,7 @@ export const useStore = create<State>((set, get) => ({
   items: init.items,
   selectedId: null,
   activeLayoutId: init.layoutId,
-  savedLayouts: loadSaved(),
+  savedLayouts: [],
   view: 'outside',
   outsideAngle: 'corner',
   walkPose: walkStart(init.room, 'door'),
@@ -304,14 +293,12 @@ export const useStore = create<State>((set, get) => ({
         items: s.items.map((i) => ({ ...i })),
       }
       const savedLayouts = [...s.savedLayouts, layout]
-      persistSaved(savedLayouts)
       return { savedLayouts, activeLayoutId: id }
     }),
 
   deleteLayout: (id) =>
     set((s) => {
       const savedLayouts = s.savedLayouts.filter((l) => l.id !== id)
-      persistSaved(savedLayouts)
       return { savedLayouts, activeLayoutId: s.activeLayoutId === id ? null : s.activeLayoutId }
     }),
 
@@ -344,5 +331,38 @@ export const useStore = create<State>((set, get) => ({
     }
     const hash = btoa(encodeURIComponent(JSON.stringify(shared)))
     return `${location.origin}${location.pathname}#${hash}`
+  },
+
+  hydrate: (doc) => {
+    const room = sanitizeRoom({ ...defaultRoom, ...doc.room })
+    const items = fitAll(room, doc.items)
+    // if the furniture sits exactly where a preset puts it, light up that tab
+    const matches = (l: Layout) => items.every((i) => {
+      const p = l.placements[i.id]
+      return p && p.x === i.x && p.y === i.y && p.rot === i.rot && p.inRoom === i.inRoom
+    })
+    const preset = items.length ? presetLayouts.find(matches) : undefined
+    set({
+      room,
+      items,
+      savedLayouts: doc.layouts ?? [],
+      ...doc.settings,
+      selectedId: null,
+      activeLayoutId: preset?.id ?? null,
+      history: [],
+      future: [],
+      view: 'outside',
+      walkPose: walkStart(room, 'door'),
+    })
+  },
+
+  docState: () => {
+    const s = get()
+    return {
+      room: s.room,
+      items: s.items,
+      layouts: s.savedLayouts,
+      settings: { daytime: s.daytime, doorAngle: s.doorAngle, blinds: s.blinds, bedding: s.bedding, walkHeight: s.walkHeight, quality: s.quality },
+    }
   },
 }))

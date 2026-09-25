@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { FloorPlan } from './components/FloorPlan'
+import { Library } from './components/Library'
 import { Scene3D } from './components/Scene3D'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
+import { useLibrary } from './library'
 import { useStore, type OutsideAngle } from './store'
 
 const ANGLES: { id: OutsideAngle; label: string }[] = [
@@ -13,21 +15,21 @@ const ANGLES: { id: OutsideAngle; label: string }[] = [
 ]
 
 export default function App() {
-  const view = useStore((s) => s.view)
-  const setView = useStore((s) => s.setView)
-  const outsideAngle = useStore((s) => s.outsideAngle)
-  const setOutsideAngle = useStore((s) => s.setOutsideAngle)
-  const walkTo = useStore((s) => s.walkTo)
-  const daytime = useStore((s) => s.daytime)
-  const setSetting = useStore((s) => s.setSetting)
-  const selectedId = useStore((s) => s.selectedId)
-  const selected = useStore((s) => s.items.find((i) => i.id === s.selectedId))
-  const rotateItem = useStore((s) => s.rotateItem)
-  const toggleInRoom = useStore((s) => s.toggleInRoom)
+  const currentId = useLibrary((s) => s.currentId)
+  const start = useLibrary((s) => s.start)
+
+  // load the room list (and a shared link, if the URL has one) once
+  useEffect(() => { void start() }, [start])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!useLibrary.getState().currentId) return
       const tag = (e.target as HTMLElement).tagName
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void useLibrary.getState().saveNow()
+        return
+      }
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       const st = useStore.getState()
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
@@ -43,6 +45,23 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  if (!currentId) return <Library />
+  return <Planner />
+}
+
+function Planner() {
+  const view = useStore((s) => s.view)
+  const setView = useStore((s) => s.setView)
+  const outsideAngle = useStore((s) => s.outsideAngle)
+  const setOutsideAngle = useStore((s) => s.setOutsideAngle)
+  const walkTo = useStore((s) => s.walkTo)
+  const daytime = useStore((s) => s.daytime)
+  const setSetting = useStore((s) => s.setSetting)
+  const selectedId = useStore((s) => s.selectedId)
+  const selected = useStore((s) => s.items.find((i) => i.id === s.selectedId))
+  const rotateItem = useStore((s) => s.rotateItem)
+  const toggleInRoom = useStore((s) => s.toggleInRoom)
 
   return (
     <div className="app">
