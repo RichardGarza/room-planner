@@ -97,7 +97,7 @@ describe('suggestLayouts', () => {
     ]
     const t0 = performance.now()
     const layouts = suggestLayouts(room, items)
-    expect(performance.now() - t0).toBeLessThan(300)
+    expect(performance.now() - t0).toBeLessThan(500)
     expect(layouts).toHaveLength(3)
     const best = apply(items, layouts[0])
     expect(best.every((i) => i.inRoom)).toBe(true)

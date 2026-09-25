@@ -189,8 +189,8 @@ export function TopBar() {
         <UnitToggle />
       </div>
       <div className="actions">
-        <button className="icon" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">↶</button>
-        <button className="icon" onClick={redo} disabled={!canRedo} title="Redo (⇧⌘Z)">↷</button>
+        <button className="chip history" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">↶ Undo</button>
+        <button className="chip history" onClick={redo} disabled={!canRedo} title="Redo (⇧⌘Z)">↷ Redo</button>
         <button className="share" onClick={share}>⇪ Share</button>
         <button className="icon" onClick={() => setHelp((h) => !h)} title="Help">?</button>
         {toast && <span className="toast">{toast}</span>}

@@ -143,9 +143,6 @@ function SelectionCard({ id }: { id: string }) {
       )}
       {item.locked && <p className="muted small">Locked: it stays put, and suggestions arrange the rest of the room around it.</p>}
       <div className="row">
-        <button className={`chip ${item.locked ? 'solid' : 'ghost'}`} onClick={() => toggleLock(item.id)} title={item.locked ? 'Unlock: let it move again' : 'Lock it where it is: no dragging, no turning, and suggestions keep it there'}>
-          {item.locked ? 'Unlock' : 'Lock in place'}
-        </button>
         <button className="chip ghost" onClick={() => toggleInRoom(item.id)}>
           {item.inRoom ? 'Take out of the room' : 'Put back in the room'}
         </button>

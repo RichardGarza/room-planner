@@ -70,14 +70,14 @@ export function forestsRoom(): RoomDoc {
     // crib along the right wall, up by the window wall
     piece('forest-crib', 'Crib', 'bed', 54, 30, 35, W - inch(30) / 2, inch(54) / 2, 90, '#e9dccd'),
     // tall cabinet on the left wall, between the changing table and the door swing
-    piece('forest-cabinet', 'Tall cabinet', 'wardrobe', 46, 18, 79, inch(18) / 2, 148, 90, '#efe9df'),
+    piece('forest-cabinet', 'Tall cabinet', 'wardrobe', 46, 18, 79, inch(18) / 2, 148, 270, '#efe9df'),
     // recliner on the front wall to the right of the door swing, side table and hamper beside it
     piece('forest-recliner', 'Recliner', 'sofa', 41, 39, 40, 100 + inch(41) / 2, D - inch(39) / 2, 180, '#9aa88f', {
       note: '41 × 39 × 40 in. Reclines to 64 in deep (38 in closed).',
     }),
-    piece('forest-side', 'Side table', 'nightstand', 22, 18, 25, 100 + inch(41) + 10 + inch(22) / 2, D - inch(18) / 2, 0, '#c9a27e'),
+    piece('forest-side', 'Side table', 'nightstand', 22, 18, 25, 100 + inch(41) + 10 + inch(22) / 2, D - inch(18) / 2, 180, '#c9a27e'),
     // hamper squeezed between the side table and the closet doors' clearance
-    piece('forest-hamper', 'Hamper', 'box', 13, 22, 24, 100 + inch(41) + 10 + inch(22) + 2 + inch(13) / 2, D - inch(22) / 2, 0, '#e5e0d8'),
+    piece('forest-hamper', 'Hamper', 'box', 13, 22, 24, 100 + inch(41) + 10 + inch(22) + 2 + inch(13) / 2, D - inch(22) / 2, 180, '#e5e0d8'),
     // the same recliner fully reclined, kept out of the room to test clearance
     piece('forest-recliner-open', 'Recliner, reclined', 'sofa', 41, 64, 40, 60, D + 90, 0, '#9aa88f', {
       inRoom: false,

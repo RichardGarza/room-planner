@@ -1,3 +1,4 @@
+import { plannerTitle, useOwner } from '../owner'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getStorage } from '../storage'
 import { defaultRoomSize, timeAgo, useLibrary, type StartWith } from '../library'
@@ -73,10 +74,11 @@ export function Library() {
   return (
     <div className="library">
       <header className="lib-head">
+        <OwnerPrompt />
         <div className="lib-title">
           <span className="logo">R</span>
           <div>
-            <h1>Room Planner</h1>
+            <OwnerTitle />
             <p className="muted">Rooms are saved in {location || '…'}</p>
           </div>
         </div>
@@ -365,4 +367,52 @@ function useDocPreview(id: string, updatedAt: string): Pick<RoomDoc, 'room' | 'i
     return () => { alive = false }
   }, [id, updatedAt])
   return doc
+}
+
+
+/** The page title, named after whoever owns this planner; click to change the name. */
+function OwnerTitle() {
+  const name = useOwner((s) => s.name)
+  const setName = useOwner((s) => s.setName)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+  if (editing) {
+    return (
+      <form
+        className="owner-edit"
+        onSubmit={(e) => { e.preventDefault(); setName(draft); setEditing(false) }}
+      >
+        <input autoFocus value={draft} placeholder="Your name" maxLength={40} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false) }} />
+        <button className="chip solid" type="submit">Save</button>
+        <button className="chip ghost" type="button" onClick={() => setEditing(false)}>Cancel</button>
+      </form>
+    )
+  }
+  return (
+    <h1 className="owner-title" title="Click to change the name" onClick={() => { setDraft(name); setEditing(true) }}>
+      {plannerTitle(name)}
+    </h1>
+  )
+}
+
+/** First launch: ask for a name so the home page can say whose planner it is. */
+function OwnerPrompt() {
+  const asked = useOwner((s) => s.asked)
+  const setName = useOwner((s) => s.setName)
+  const skip = useOwner((s) => s.skip)
+  const [draft, setDraft] = useState('')
+  if (asked) return null
+  return (
+    <div className="owner-overlay" role="dialog" aria-modal="true" aria-labelledby="owner-q">
+      <form className="owner-card" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) setName(draft); else skip() }}>
+        <span className="logo">R</span>
+        <h2 id="owner-q">Welcome. What’s your name?</h2>
+        <p className="muted">The home page will be called <b>{plannerTitle(draft || 'Your')}</b>. You can change it later by clicking the title.</p>
+        <input autoFocus value={draft} placeholder="First name" maxLength={40} onChange={(e) => setDraft(e.target.value)} />
+        <div className="row">
+          <button className="chip solid" type="submit">{draft.trim() ? 'Continue' : 'Skip'}</button>
+        </div>
+      </form>
+    </div>
+  )
 }

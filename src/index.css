@@ -236,3 +236,8 @@ h5 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spac
 .angle-input input:focus { outline: none; }
 .angle-input:focus-within { border-color: var(--pink); box-shadow: 0 0 0 2px var(--pink-soft); }
 .angle-input .angle-unit { padding: 0 9px 0 1px; font-size: 11px; color: var(--muted); font-weight: 700; }
+
+
+/* wide undo / redo */
+.topbar .chip.history { min-width: 82px; padding: 6px 12px; font-size: 12px; }
+.topbar .chip.history:disabled { opacity: 0.4; cursor: default; }

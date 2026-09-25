@@ -18,6 +18,11 @@ const step = async (label, fn) => { try { await fn() } catch (e) { console.log(`
 
 await page.goto(base, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1200)
+// first launch asks for a name; answer it so the rest of the walkthrough is not blocked
+await step('owner prompt', async () => {
+  const q = page.locator('.owner-card input')
+  if (await q.count()) { await q.fill(process.env.OWNER ?? 'Richard'); await page.locator('.owner-card button[type=submit]').click(); await page.waitForTimeout(400) }
+})
 await shot('01-library')
 
 await step('new room panel', async () => {
@@ -68,7 +73,7 @@ if (process.env.WALK) {
 }
 
 await step('open room card', async () => {
-  await page.getByRole('button', { name: /^Room/ }).first().click({ timeout: 15000 })
+  await page.getByRole('button', { name: /^Room(?! bush)/ }).first().click({ timeout: 15000 })
   await page.locator('.sidebar').evaluate((el) => el.scrollTo(0, 99999))
 })
 await page.waitForTimeout(600)
