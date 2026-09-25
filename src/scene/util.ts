@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { useEffect } from 'react'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /** centimetres → metres */
@@ -9,6 +10,15 @@ export function shadeColor(hex: string, f: number) {
   const n = parseInt(hex.slice(1), 16)
   const r = Math.min(255, ((n >> 16) & 255) * f), g = Math.min(255, ((n >> 8) & 255) * f), b = Math.min(255, (n & 255) * f)
   return `rgb(${r | 0},${g | 0},${b | 0})`
+}
+
+/**
+ * Frees a memoised geometry or material (or a list of them) when it is replaced or unmounted,
+ * so room edits do not leave orphaned GL buffers behind.
+ */
+export function useDisposable<T extends { dispose(): void } | { dispose(): void }[]>(res: T): T {
+  useEffect(() => () => { for (const r of Array.isArray(res) ? res : [res]) r.dispose() }, [res])
+  return res
 }
 
 /** Small deterministic PRNG so procedural detail is stable between renders. */

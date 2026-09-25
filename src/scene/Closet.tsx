@@ -4,7 +4,7 @@ import { CLOSET_HEIGHT } from '../geometry'
 import { useStore } from '../store'
 import type { Closet as ClosetSpec, Room } from '../types'
 import { brushed, chrome, paint, wallMat, type Detail } from './Shell'
-import { cm, mergedBoxes, shadeColor, WALL_T, type BoxSpec } from './util'
+import { cm, mergedBoxes, shadeColor, useDisposable, WALL_T, type BoxSpec } from './util'
 
 /*
  * A closet in a wall's local frame (x along the wall, y up, +z into the room). The wall slab
@@ -51,7 +51,7 @@ export function Closet({ room, closet: c, detail }: { room: Room; closet: Closet
   const floor = paint(shadeColor(room.floorColor, 0.92), 0.8)
   const metal = chrome()
   const rod = brushed()
-  const shade = useMemo(shadeMat, [])
+  const shade = useDisposable(useMemo(shadeMat, []))
 
   // recess shell: floor, back wall and two sides (boxes, so the outside faces read as wall from behind)
   const shell = useMemo(() => ({
@@ -61,18 +61,19 @@ export function Closet({ room, closet: c, detail }: { room: Room; closet: Closet
       [x0 + ww + WALL_T / 2, H / 2, (-dd - WALL_T) / 2, WALL_T, H, dd - WALL_T],
     ]),
   }), [cx, x0, ww, dd, H])
+  useDisposable(useMemo(() => [shell.back, shell.sides], [shell]))
 
   // jamb lining through the wall thickness and an architrave on the room face
-  const jamb = useMemo(() => mergedBoxes([
+  const jamb = useDisposable(useMemo(() => mergedBoxes([
     [x0 + 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
     [x0 + ww - 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
     [cx, hh + 0.02, -WALL_T / 2, ww + 0.08, 0.04, WALL_T],
-  ]), [x0, ww, hh, cx])
-  const architrave = useMemo(() => mergedBoxes([
+  ]), [x0, ww, hh, cx]))
+  const architrave = useDisposable(useMemo(() => mergedBoxes([
     [x0 - 0.045, hh / 2 + 0.02, 0.012, 0.085, hh + 0.04, 0.024],
     [x0 + ww + 0.045, hh / 2 + 0.02, 0.012, 0.085, hh + 0.04, 0.024],
     [cx, hh + 0.085, 0.012, ww + 0.2, 0.09, 0.024],
-  ]), [x0, ww, hh, cx])
+  ]), [x0, ww, hh, cx]))
 
   // shelf above the rod, the rod with its end brackets, a few hangers and some clothes on them
   const shelfY = Math.min(SHELF_Y, hh - 0.12)
@@ -94,6 +95,7 @@ export function Closet({ room, closet: c, detail }: { room: Room; closet: Closet
     }
     return { metal: mergedBoxes(metalBoxes), clothes }
   }, [ww, dd, x0, rodY, rodZ])
+  useDisposable(hangers.metal)
 
   const q = ww / 4
   const track = paint('#d9d5cd', 0.6)
@@ -161,14 +163,14 @@ export function Closet({ room, closet: c, detail }: { room: Room; closet: Closet
 
 /** A door leaf built along local +x from its hinge edge, with two raised panels on the room face. */
 function Leaf({ w, h, paint: leafPaint, panel }: { w: number; h: number; paint: THREE.Material; panel: THREE.Material }) {
-  const panels = useMemo(() => {
+  const panels = useDisposable(useMemo(() => {
     const boxes: BoxSpec[] = []
     const pw = w - 0.12
     for (const [y, ph] of [[h * 0.7, h * 0.4], [h * 0.26, h * 0.32]] as [number, number][]) {
       boxes.push([w / 2, y, LEAF_T + 0.004, pw, ph, 0.008])
     }
     return mergedBoxes(boxes)
-  }, [w, h])
+  }, [w, h]))
   return (
     <group>
       <mesh position={[w / 2, h / 2 + 0.005, LEAF_T / 2]} material={leafPaint} castShadow receiveShadow>
@@ -186,9 +188,9 @@ function SlidingDoors({ x0, ww, hh, slide, paint: leafPaint, panel, track, metal
   const zFront = -0.03, zBack = -0.075
   const frontX = x0 + ww - pw / 2
   const backX = x0 + pw / 2 + slide * (ww - pw)
-  const panels = useMemo(() => mergedBoxes([
+  const panels = useDisposable(useMemo(() => mergedBoxes([
     [0, hh * 0.5, 0.017, pw - 0.16, hh * 0.86, 0.006],
-  ]), [pw, hh])
+  ]), [pw, hh]))
   return (
     <group>
       <mesh position={[cx, hh - 0.015, -WALL_T / 2]} material={track}><boxGeometry args={[ww, 0.03, WALL_T - 0.01]} /></mesh>

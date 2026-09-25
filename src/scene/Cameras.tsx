@@ -4,15 +4,40 @@ import { OrbitControls } from '@react-three/drei'
 import { useEffect, useMemo, useRef } from 'react'
 import { isRugKind, rectOf } from '../geometry'
 import { useStore, type OutsideAngle } from '../store'
-import type { Item, Room } from '../types'
+import type { Item, Room, Wall } from '../types'
 import { cm } from './util'
 
 /* --------------------------------- cameras -------------------------------- */
 
+/**
+ * The corner preset stands at a corner facing the door wall, so the door is one of the two
+ * visible walls (the two walls nearest the camera are hidden). Of the two corners that face the
+ * door wall it prefers the one whose other visible wall has a window, then a closet, and
+ * otherwise the corner diagonally opposite the door's own end of its wall.
+ */
+function cornerFor(room: Room): [number, number, number] {
+  const W = cm(room.w), D = cm(room.d)
+  const door = room.doors[0]
+  const dx = 1.9, dz = 2.2, y = 3.6
+  if (!door) return [-dx, y, D + dz]
+  const has = (wall: Wall) => (room.windows.some((w) => w.wall === wall) ? 2 : 0) + ((room.closets ?? []).some((c) => c.wall === wall) ? 1 : 0)
+  const mid = door.offset + door.width / 2
+  if (door.wall === 'top' || door.wall === 'bottom') {
+    const z = door.wall === 'top' ? D + dz : -dz
+    const scoreLeft = has('right'), scoreRight = has('left') // a camera on the left sees the right wall
+    const left = scoreLeft !== scoreRight ? scoreLeft > scoreRight : mid > room.w / 2
+    return [left ? -dx : W + dx, y, z]
+  }
+  const x = door.wall === 'left' ? W + dx : -dx
+  const scoreTop = has('bottom'), scoreBottom = has('top') // a camera at the top sees the bottom wall
+  const top = scoreTop !== scoreBottom ? scoreTop > scoreBottom : mid > room.d / 2
+  return [x, y, top ? -dz : D + dz]
+}
+
 export const anglePositions = (room: Room): Record<OutsideAngle, [number, number, number]> => {
   const W = cm(room.w), D = cm(room.d)
   return {
-    corner: [-1.9, 3.6, D + 2.2],
+    corner: cornerFor(room),
     above: [W / 2, 6.2, D / 2 + 0.01],
     window: [W / 2, 2.6, -3.2],
     door: [W / 2, 2.4, D + 3.4],
@@ -23,14 +48,19 @@ export function OutsideCamera({ room, locked }: { room: Room; locked: boolean })
   const angle = useStore((s) => s.outsideAngle)
   const camera = useThree((s) => s.camera)
   const controls = useRef<any>(null)
-  const target = useMemo(() => new THREE.Vector3(cm(room.w) / 2, 0.8, cm(room.d) / 2), [room])
+  const W = cm(room.w), D = cm(room.d)
+  // Only the room's size (and where its door sits) moves the orbit: typing a name or picking a colour must not reset it.
+  const target = useMemo(() => new THREE.Vector3(W / 2, 0.8, D / 2), [W, D])
+  const presetKey = `${room.doors[0]?.wall ?? ''}:${room.doors[0]?.offset ?? 0}:${room.windows.map((w) => w.wall).join()}:${(room.closets ?? []).map((c) => c.wall).join()}`
+  const roomRef = useRef(room)
+  roomRef.current = room
   useEffect(() => {
-    const p = anglePositions(room)[angle]
+    const p = anglePositions(roomRef.current)[angle]
     camera.position.set(...p)
     camera.lookAt(target)
     controls.current?.target.copy(target)
     controls.current?.update()
-  }, [angle, room, camera, target])
+  }, [angle, W, D, presetKey, camera, target])
   return <OrbitControls ref={controls} makeDefault enabled={!locked} target={target} maxPolarAngle={Math.PI / 2 - 0.05} minDistance={1.5} maxDistance={14} enableDamping dampingFactor={0.12} />
 }
 
@@ -38,6 +68,11 @@ export function OutsideCamera({ room, locked }: { room: Room; locked: boolean })
 const WALK_FOV = 75
 /** radians of turn per pixel of mouse drag while walking (lower = calmer) */
 const LOOK_SENSITIVITY = 0.0022
+
+const typing = (t: EventTarget | null) => {
+  const el = t as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+}
 
 export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
   const camera = useThree((s) => s.camera)
@@ -63,6 +98,7 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
 
   useEffect(() => {
     const el = gl.domElement
+    const held = keys.current
     let last: { x: number; y: number } | null = null
     const down = (e: PointerEvent) => { last = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId) }
     const move = (e: PointerEvent) => {
@@ -74,19 +110,27 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       invalidate()
     }
     const up = () => { last = null }
-    const kd = (e: KeyboardEvent) => { if ((e.target as HTMLElement).tagName !== 'INPUT') { keys.current.add(e.key.toLowerCase()); invalidate() } }
-    const ku = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase())
+    const kd = (e: KeyboardEvent) => { if (!typing(e.target)) { held.add(e.key.toLowerCase()); invalidate() } }
+    const ku = (e: KeyboardEvent) => held.delete(e.key.toLowerCase())
+    // losing focus with W held must not leave the walker moving (and the demand loop spinning)
+    const clear = () => held.clear()
+    const vis = () => { if (document.visibilityState !== 'visible') held.clear() }
     el.addEventListener('pointerdown', down)
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
     window.addEventListener('keydown', kd)
     window.addEventListener('keyup', ku)
+    window.addEventListener('blur', clear)
+    document.addEventListener('visibilitychange', vis)
     return () => {
       el.removeEventListener('pointerdown', down)
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       window.removeEventListener('keydown', kd)
       window.removeEventListener('keyup', ku)
+      window.removeEventListener('blur', clear)
+      document.removeEventListener('visibilitychange', vis)
+      held.clear()
     }
   }, [gl, invalidate])
 

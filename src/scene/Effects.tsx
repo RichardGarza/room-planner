@@ -1,5 +1,5 @@
-import { Bloom, EffectComposer, N8AO, SMAA, ToneMapping, Vignette } from '@react-three/postprocessing'
-import { RenderPass, ToneMappingMode } from 'postprocessing'
+import { Bloom, EffectComposer, N8AO, Outline, SMAA, ToneMapping, Vignette } from '@react-three/postprocessing'
+import { KernelSize, RenderPass, ToneMappingMode } from 'postprocessing'
 import type { Camera, Scene } from 'three'
 
 /* ------------------------------ post-processing ----------------------------- */
@@ -12,14 +12,18 @@ const renderPass = (scene: Scene, camera: Camera) => {
 }
 
 /**
- * Ambient occlusion in the corners and under the furniture, SMAA for edges, a whisper of
- * vignette, a bloom on the lamp in the evening, then ACES tone mapping. Only mounted on quality "best".
+ * Ambient occlusion in the corners and under the furniture, a pink outline around the selected
+ * piece (fed by the <Selection> context the furniture is mounted in), SMAA for edges, a whisper
+ * of vignette, a bloom on the lamp in the evening, then ACES tone mapping. Only mounted on
+ * quality "best". The composer's autoClear is off because the outline pass keeps its own mask
+ * buffer; our render pass clears colour, depth and stencil explicitly.
  */
 export function Effects({ daytime }: { daytime: boolean }) {
   return (
-    <EffectComposer multisampling={0} stencilBuffer enableNormalPass={false} renderPass={renderPass}>
+    <EffectComposer multisampling={0} stencilBuffer enableNormalPass={false} renderPass={renderPass} autoClear={false}>
       <N8AO aoRadius={0.4} distanceFalloff={0.5} intensity={1.6} quality="medium" halfRes />
-      {daytime ? null : <Bloom mipmapBlur luminanceThreshold={1.1} intensity={0.45} radius={0.45} />}
+      <Outline edgeStrength={3} visibleEdgeColor={0xe5407a} hiddenEdgeColor={0xe5407a} xRay={false} blur kernelSize={KernelSize.SMALL} />
+      {daytime ? null : <Bloom mipmapBlur luminanceThreshold={1.5} intensity={0.3} radius={0.45} />}
       <SMAA />
       <Vignette eskil={false} offset={0.2} darkness={0.32} />
       {/* the composer turns the renderer's tone mapping off, so ACES is applied here, last */}

@@ -154,23 +154,21 @@ export type PlankMaps = { map: THREE.Texture; normalMap: THREE.Texture; roughnes
 
 const PLANK_W = 0.12, PLANK_L = 1.2
 const PLANKS_ACROSS = 8, PLANKS_ALONG = 2
-
-function hexToRgb(hex: string): [number, number, number] {
-  const n = parseInt(hex.slice(1), 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
+/** The neutral plank map is scaled down by this so per-plank highlights survive the clamp to 255. */
+export const PLANK_GAIN = 1.2
 
 /**
- * Oak floorboards tinted by the room's floor colour: per-plank shade and grain,
- * bevelled edges in the normal map, and a roughness map that follows the grain.
- * The tile covers 8 planks across (0.96 m) by two plank lengths (2.4 m); columns
- * are staggered so the end joints don't line up.
+ * Oak floorboards as ONE neutral (greyscale, slightly hue-varied) set per quality level:
+ * per-plank shade and grain, bevelled edges in the normal map, and a roughness map that
+ * follows the grain. The room's floor colour is applied through the material colour, which
+ * multiplies the map, so a colour-picker drag never generates new textures. The tile covers
+ * 8 planks across (0.96 m) by two plank lengths (2.4 m); columns are staggered so the end
+ * joints don't line up.
  */
-export function plankMaps(color: string, detail: 'best' | 'fast'): PlankMaps {
-  return memo(`planks-${color}-${detail}`, () => {
+export function plankMaps(detail: 'best' | 'fast'): PlankMaps {
+  return memo(`planks-${detail}`, () => {
     const W = detail === 'best' ? 512 : 192
     const H = W * 2
-    const [br, bg, bb] = hexToRgb(color)
     const rnd = seeded(97)
     const grain = fbm(W, 4, 4, 41) // will be sampled with x stretched to give long streaks
     const fine = valueNoise(W, 64, 43)
@@ -205,11 +203,11 @@ export function plankMaps(color: string, detail: 'best' | 'fast'): PlankMaps {
         const edge = Math.min(edgeX, edgeY)
         const bevelT = Math.min(1, edge / bevel) // 0 at the joint, 1 inside
         const joint = edge < 0.6 ? 0.55 : 1 // dark gap line between boards
-        const lum = sh.s * streak * joint * (0.92 + bevelT * 0.08)
+        const lum = (sh.s * streak * joint * (0.92 + bevelT * 0.08)) / PLANK_GAIN
         const i = (y * W + x) * 4
-        colorData[i] = Math.min(255, br * lum * (1 + sh.hue))
-        colorData[i + 1] = Math.min(255, bg * lum)
-        colorData[i + 2] = Math.min(255, bb * lum * (1 - sh.hue))
+        colorData[i] = Math.min(255, 255 * lum * (1 + sh.hue))
+        colorData[i + 1] = Math.min(255, 255 * lum)
+        colorData[i + 2] = Math.min(255, 255 * lum * (1 - sh.hue))
         colorData[i + 3] = 255
         height[y * W + x] = bevelT * 0.9 + (g - 0.5) * 0.12 + (f - 0.5) * 0.05
         rough[y * W + x] = sh.r + (g - 0.5) * 0.2 + (1 - bevelT) * 0.15
@@ -231,15 +229,17 @@ export function skyTexture(daytime: boolean): THREE.Texture {
     const grad = g.createLinearGradient(0, 256, 0, 0)
     // the sky is a full sphere: v = 0.5 is the horizon, 1 the zenith
     if (daytime) {
-      grad.addColorStop(0, '#dde9f6')
-      grad.addColorStop(0.5, '#d9e7f7')
-      grad.addColorStop(0.55, '#a6cbf0')
-      grad.addColorStop(0.68, '#6da5e8')
-      grad.addColorStop(1, '#3d7dd2')
+      // pale warm haze at the horizon deepening to a clear blue overhead
+      grad.addColorStop(0, '#e6eef6')
+      grad.addColorStop(0.5, '#e9eff5')
+      grad.addColorStop(0.53, '#c4dbf2')
+      grad.addColorStop(0.6, '#8fbcec')
+      grad.addColorStop(0.72, '#5f9be0')
+      grad.addColorStop(1, '#3a78cc')
     } else {
-      grad.addColorStop(0, '#2a3358')
-      grad.addColorStop(0.5, '#2a3358')
-      grad.addColorStop(0.62, '#161d3c')
+      grad.addColorStop(0, '#343d66')
+      grad.addColorStop(0.5, '#343d66')
+      grad.addColorStop(0.62, '#1a2244')
       grad.addColorStop(0.82, '#0a0f26')
       grad.addColorStop(1, '#05081a')
     }
@@ -248,6 +248,41 @@ export function skyTexture(daytime: boolean): THREE.Texture {
     const t = new THREE.CanvasTexture(c)
     t.colorSpace = THREE.SRGBColorSpace
     t.wrapS = THREE.RepeatWrapping
+    return t
+  })
+}
+
+/** Radial alpha fade (opaque centre → transparent rim) for the ground disc under the room. */
+export function groundFadeTexture(): THREE.Texture {
+  return memo('ground-fade', () => {
+    const { c, g } = canvas(256, 256)
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128)
+    grad.addColorStop(0, 'rgba(255,255,255,1)')
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.95)')
+    grad.addColorStop(0.8, 'rgba(255,255,255,0.35)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    g.fillStyle = grad
+    g.fillRect(0, 0, 256, 256)
+    return new THREE.CanvasTexture(c)
+  })
+}
+
+/** A soft cloud: a few overlapping radial blobs with a feathered edge (alpha in the image). */
+export function cloudTexture(): THREE.Texture {
+  return memo('cloud', () => {
+    const { c, g } = canvas(256, 128)
+    const rnd = seeded(5)
+    for (let i = 0; i < 9; i++) {
+      const x = 40 + rnd() * 176, y = 50 + rnd() * 40, r = 28 + rnd() * 30
+      const grad = g.createRadialGradient(x, y, 0, x, y, r)
+      grad.addColorStop(0, 'rgba(255,255,255,0.9)')
+      grad.addColorStop(0.55, 'rgba(255,255,255,0.45)')
+      grad.addColorStop(1, 'rgba(255,255,255,0)')
+      g.fillStyle = grad
+      g.fillRect(0, 0, 256, 128)
+    }
+    const t = new THREE.CanvasTexture(c)
+    t.colorSpace = THREE.SRGBColorSpace
     return t
   })
 }
