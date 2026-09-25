@@ -9,9 +9,11 @@ import { park, useStore, type NewItemSpec } from '../store'
 import { ClosetRows } from './ClosetRows'
 import { CopyToRoom } from './CopyToRoom'
 import type { Check } from '../types'
-import { formatLength, formatRoomDims, formatSize, useUnits } from '../units'
+import { formatLength, formatRoomSize, formatSize, useUnits } from '../units'
 import { LengthInput } from './LengthInput'
 import { AngleInput } from './AngleInput'
+import { Card, Section } from './Card'
+import { useCards, useSidebar } from './Collapse'
 
 export function Sidebar() {
   const room = useStore((s) => s.room)
@@ -30,11 +32,15 @@ export function Sidebar() {
   const selected = items.find((i) => i.id === selectedId)
   const problems = checks.filter((c) => c.level !== 'ok')
   const good = checks.filter((c) => c.level === 'ok')
+  const hide = useSidebar((s) => s.toggle)
 
   return (
     <aside className="sidebar">
-      <section className="card">
-        <h4>Layout</h4>
+      <div className="sidebar-head">
+        <button type="button" className="sidebar-hide" onClick={hide} title="Hide the side panel (\)" aria-label="Hide the side panel">»</button>
+      </div>
+
+      <Card id="layout" title="Layout">
         <h3>{title}</h3>
         <p className="muted">{layout ? layout.description : 'You have moved things around. Save it below to keep it.'}</p>
         {!layout && <p className="pink small">✎ Changed. This is your own version.</p>}
@@ -42,12 +48,11 @@ export function Sidebar() {
         <ul className="notes">
           {good.map((c, i) => <CheckLine key={i} c={c} />)}
         </ul>
-      </section>
+      </Card>
 
       {selected && <SelectionCard id={selected.id} />}
 
-      <section className="card">
-        <h4>Checks ({problems.length})</h4>
+      <Card id="checks" title={`Checks (${problems.length})`}>
         {problems.length === 0 ? (
           <p className="ok-text">✓ Nothing in the way. Everything fits.</p>
         ) : (
@@ -55,7 +60,7 @@ export function Sidebar() {
             {problems.map((c, i) => <CheckLine key={i} c={c} />)}
           </ul>
         )}
-      </section>
+      </Card>
 
       <FurniturePalette />
       <RoomCard />
@@ -94,20 +99,29 @@ function SelectionCard({ id }: { id: string }) {
   const r = rectOf(item)
   const { fw, fd } = footprint(item)
   const len = (v: number) => formatLength(v, { unit })
+  const locked = !!item.locked
+
+  // picking a piece always shows its card, even when it was folded away earlier
+  useEffect(() => { useCards.getState().setOpen('selected', true) }, [id])
 
   return (
-    <section className="card selection">
-      <h4>Selected</h4>
+    <Card id="selected" title="Selected" className="selection" extra={locked ? <span title="Locked in place">🔒</span> : undefined}>
       <div className="sel-head">
         <input type="color" className="swatch-input" value={item.color} onChange={(e) => updateItem(item.id, { color: e.target.value })} title="Colour" />
         <input className="text name" value={item.name} onChange={(e) => updateItem(item.id, { name: e.target.value })} />
       </div>
       {item.note && <p className="muted small">{item.note}</p>}
       <div className="row">
-        <button className="chip" onClick={() => rotateItem(item.id, -90)} title="Rotate left">↺ 90°</button>
-        <button className="chip" onClick={() => rotateItem(item.id, 90)} title="Rotate right">↻ 90°</button>
-        <button className="chip" onClick={() => rotateItem(item.id, 180)} title="Turn around">⇄ 180°</button>
-        <AngleInput value={item.rot} onCommit={(deg) => { const s = useStore.getState(); s.snapshot(); s.setRotation(item.id, deg) }} />
+        <button className="chip" onClick={() => rotateItem(item.id, -90)} disabled={locked} title={locked ? 'Unlock to turn it' : 'Rotate left'}>↺ 90°</button>
+        <button className="chip" onClick={() => rotateItem(item.id, 90)} disabled={locked} title={locked ? 'Unlock to turn it' : 'Rotate right'}>↻ 90°</button>
+        <button className="chip" onClick={() => rotateItem(item.id, 180)} disabled={locked} title={locked ? 'Unlock to turn it' : 'Turn around'}>⇄ 180°</button>
+        {!locked && <AngleInput value={item.rot} onCommit={(deg) => { const s = useStore.getState(); s.snapshot(); s.setRotation(item.id, deg) }} />}
+      </div>
+      <div className="row">
+        <button className={`chip lock${locked ? ' on' : ''}`} onClick={() => toggleLock(item.id)} aria-pressed={locked} title={locked ? 'Let it be moved and turned again (L)' : 'Keep it where it is: no dragging or turning, and suggested layouts arrange around it (L)'}>
+          {locked ? '🔓 Unlock' : '🔒 Lock in place'}
+        </button>
+        {locked && <span className="muted small lock-note">Stays put. Suggestions work around it.</span>}
       </div>
       <div className="dims-grid">
         <label>Width<LengthInput value={item.w} min={5} max={600} onCommit={(w) => resizeItem(item.id, { w })} /></label>
@@ -145,7 +159,7 @@ function SelectionCard({ id }: { id: string }) {
         )}
         <CopyToRoom item={item} />
       </div>
-    </section>
+    </Card>
   )
 }
 
@@ -162,6 +176,7 @@ const KINDS: { id: ItemKind; label: string }[] = [
   { id: 'wardrobe', label: 'Wardrobe' },
   { id: 'rug', label: 'Round rug' },
   { id: 'rugRect', label: 'Rectangular rug' },
+  { id: 'plant', label: 'Indoor plant' },
   { id: 'box', label: 'Plain box' },
 ]
 
@@ -213,7 +228,6 @@ function parkNew(id: string) {
 }
 
 function FurniturePalette() {
-  const [open, setOpen] = useState(true)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All')
   const [customOpen, setCustomOpen] = useState(false)
@@ -236,13 +250,7 @@ function FurniturePalette() {
   const groups = categories.map((c) => ({ c, presets: visible.filter((p) => p.category === c) })).filter((g) => g.presets.length > 0)
 
   return (
-    <section className="card">
-      <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
-        <h4>Add furniture</h4>
-        <span className="muted small" title="Sizes are width × depth × height">w × d × h in {unit === 'in' ? 'inches' : 'cm'}</span>
-        <span className="chev">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
+    <Card id="palette" title="Add furniture" extra={<span title="Sizes are width × depth × height">w × d × h in {unit === 'in' ? 'inches' : 'cm'}</span>}>
         <div className="palette">
           <input className="text palette-search" type="search" placeholder="Search, e.g. wardrobe" value={query} onChange={(e) => setQuery(e.target.value)} />
           <div className="palette-cats">
@@ -304,8 +312,7 @@ function FurniturePalette() {
             </form>
           )}
         </div>
-      )}
-    </section>
+    </Card>
   )
 }
 
@@ -410,15 +417,10 @@ function RoomCard() {
   const setRoom = useStore((s) => s.setRoom)
   const addOpening = useStore((s) => s.addOpening)
   const unit = useUnits((s) => s.unit)
-  const [open, setOpen] = useState(false)
+  const closets = room.closets?.length ?? 0
+  const summary = `${formatRoomSize(room.w, room.d, { unit })} · ceiling ${formatLength(room.h, { unit, feet: true })}`
   return (
-    <section className="card">
-      <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
-        <h4>Room</h4>
-        <span className="muted small">{formatRoomDims(room.w, room.d, room.h, { unit })}</span>
-        <span className="chev">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
+    <Card id="room" title="Room" defaultOpen={false} extra={<span title={`${formatRoomSize(room.w, room.d, { unit })}, ceiling height ${formatLength(room.h, { unit, feet: true })}`}>{summary}</span>}>
         <div className="room-form">
           <div className="row">
             <input className="text" value={room.name} onChange={(e) => setRoom({ name: e.target.value })} placeholder="Room name" />
@@ -429,72 +431,83 @@ function RoomCard() {
           <div className="dims-grid">
             <label>Width<LengthInput value={room.w} min={150} max={1200} onCommit={(w) => setRoom({ w })} /></label>
             <label>Depth<LengthInput value={room.d} min={150} max={1200} onCommit={(d) => setRoom({ d })} /></label>
-            <label>Height<LengthInput value={room.h} min={200} max={400} onCommit={(h) => setRoom({ h })} /></label>
+            <label>Ceiling height<LengthInput value={room.h} min={200} max={400} onCommit={(h) => setRoom({ h })} /></label>
           </div>
-          <p className="muted small">Width runs left to right on the plan, depth from the back wall to the front wall.</p>
+          <p className="muted small">Width runs left to right on the plan, depth from the back wall to the front wall. Ceiling height sets the walls in 3D.</p>
 
-          <h5>Windows</h5>
-          {room.windows.length === 0 && <p className="muted small">No windows.</p>}
-          <WindowRows />
-          <div className="row"><button className="chip ghost" onClick={() => addOpening('window')}>+ Add window</button></div>
+          <Section id="room.windows" title={`Windows (${room.windows.length})`}>
+            {room.windows.length === 0 && <p className="muted small">No windows.</p>}
+            <WindowRows />
+            <div className="row"><button className="chip ghost" onClick={() => addOpening('window')}>+ Add window</button></div>
+          </Section>
 
-          <h5>Doors</h5>
-          {room.doors.length === 0 && <p className="muted small">No doors.</p>}
-          <DoorRows />
-          <div className="row"><button className="chip ghost" onClick={() => addOpening('door')}>+ Add door</button></div>
-          <p className="muted small">"From corner" is measured from the left end of a back or front wall, or from the back end of a side wall. "Near corner" puts the hinge at that end.</p>
+          <Section id="room.doors" title={`Doors (${room.doors.length})`}>
+            {room.doors.length === 0 && <p className="muted small">No doors.</p>}
+            <DoorRows />
+            <div className="row"><button className="chip ghost" onClick={() => addOpening('door')}>+ Add door</button></div>
+            <p className="muted small">"From corner" is measured from the left end of a back or front wall, or from the back end of a side wall. "Near corner" puts the hinge at that end.</p>
+          </Section>
 
-          <h5>Radiators</h5>
-          {room.radiators.length === 0 && <p className="muted small">No radiators.</p>}
-          <RadiatorRows />
-          <div className="row"><button className="chip ghost" onClick={() => addOpening('radiator')}>+ Add radiator</button></div>
+          <Section id="room.radiators" title={`Radiators (${room.radiators.length})`}>
+            {room.radiators.length === 0 && <p className="muted small">No radiators.</p>}
+            <RadiatorRows />
+            <div className="row"><button className="chip ghost" onClick={() => addOpening('radiator')}>+ Add radiator</button></div>
+          </Section>
 
-          <ClosetRows />
+          {/* ClosetRows brings its own "Closets" heading; the section header replaces it (see index.css) */}
+          <Section id="room.closets" title={`Closets (${closets})`}>
+            <ClosetRows />
+          </Section>
 
-          <h5>Colours</h5>
-          <div className="colors">
-            {WALLS.map((w) => (
-              <label key={w.id}><input type="color" className="swatch-input" value={room.wallColors[w.id]} onChange={(e) => setRoom({ wallColors: { ...room.wallColors, [w.id]: e.target.value } })} />{w.label}</label>
-            ))}
-            <label><input type="color" className="swatch-input" value={room.floorColor} onChange={(e) => setRoom({ floorColor: e.target.value })} />Floor</label>
-          </div>
+          <Section id="room.colours" title="Colours">
+            <div className="colors">
+              {WALLS.map((w) => (
+                <label key={w.id}><input type="color" className="swatch-input" value={room.wallColors[w.id]} onChange={(e) => setRoom({ wallColors: { ...room.wallColors, [w.id]: e.target.value } })} />{w.label}</label>
+              ))}
+              <label><input type="color" className="swatch-input" value={room.floorColor} onChange={(e) => setRoom({ floorColor: e.target.value })} />Floor</label>
+            </div>
+          </Section>
         </div>
-      )}
-    </section>
+    </Card>
   )
 }
 
 function DisplaySettings() {
   const doorAngle = useStore((s) => s.doorAngle)
   const blinds = useStore((s) => s.blinds)
-  const bedding = useStore((s) => s.bedding)
   const walkHeight = useStore((s) => s.walkHeight)
+  const lookSensitivity = useStore((s) => s.lookSensitivity)
   const quality = useStore((s) => s.quality)
+  const walking = useStore((s) => s.view === 'walk')
   const set = useStore((s) => s.setSetting)
   return (
-    <section className="card">
-      <h4>Display settings</h4>
+    <Card id="display" title="Display settings">
       <div className="setting">
         <span>Room door</span>
-        <input type="range" min={0} max={90} value={doorAngle} onChange={(e) => set('doorAngle', +e.target.value)} />
+        <input type="range" min={0} max={90} value={doorAngle} onChange={(e) => set('doorAngle', +e.target.value)} aria-label="Room door" />
         <b>{doorAngle}°</b>
       </div>
       <div className="setting">
         <span>Blinds</span>
-        <input type="range" min={0} max={100} value={blinds} onChange={(e) => set('blinds', +e.target.value)} />
+        <input type="range" min={0} max={100} value={blinds} onChange={(e) => set('blinds', +e.target.value)} aria-label="Blinds" />
         <b>{blinds}%</b>
       </div>
-      <div className="setting wide">
-        <span>Bedding on the bed</span>
-        <button className={`toggle${bedding ? ' on' : ''}`} onClick={() => set('bedding', !bedding)} aria-pressed={bedding}><i /></button>
-      </div>
-      <div className="setting wide">
-        <span>Eye height when walking</span>
-        <div className="seg">
-          <button className={walkHeight === 'adult' ? 'on' : ''} onClick={() => set('walkHeight', 'adult')}>Adult</button>
-          <button className={walkHeight === 'child' ? 'on' : ''} onClick={() => set('walkHeight', 'child')}>Child</button>
-        </div>
-      </div>
+      {walking && (
+        <>
+          <div className="setting wide">
+            <span>Eye height when walking</span>
+            <div className="seg">
+              <button className={walkHeight === 'adult' ? 'on' : ''} onClick={() => set('walkHeight', 'adult')}>Adult</button>
+              <button className={walkHeight === 'child' ? 'on' : ''} onClick={() => set('walkHeight', 'child')}>Child</button>
+            </div>
+          </div>
+          <div className="setting">
+            <span>Look sensitivity</span>
+            <input type="range" min={0.25} max={2} step={0.05} value={lookSensitivity} onChange={(e) => set('lookSensitivity', +e.target.value)} aria-label="Look sensitivity" />
+            <b>×{lookSensitivity.toFixed(1)}</b>
+          </div>
+        </>
+      )}
       <div className="setting wide">
         <span>3D quality</span>
         <div className="seg">
@@ -502,7 +515,7 @@ function DisplaySettings() {
           <button className={quality === 'fast' ? 'on' : ''} onClick={() => set('quality', 'fast')}>Fast</button>
         </div>
       </div>
-    </section>
+    </Card>
   )
 }
 
@@ -514,8 +527,7 @@ function SavedLayouts() {
   const applyLayout = useStore((s) => s.applyLayout)
   const [name, setName] = useState('')
   return (
-    <section className="card">
-      <h4>My layouts</h4>
+    <Card id="saved" title="My layouts" extra={saved.length > 0 ? String(saved.length) : undefined}>
       <form
         className="row"
         onSubmit={(e) => { e.preventDefault(); saveLayout(name); setName('') }}
@@ -535,6 +547,6 @@ function SavedLayouts() {
           ))}
         </ul>
       )}
-    </section>
+    </Card>
   )
 }

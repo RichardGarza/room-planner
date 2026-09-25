@@ -32,8 +32,15 @@ p { margin: 6px 0; line-height: 1.45; }
 .ok-text { color: var(--ok); font-weight: 700; }
 
 .app { display: flex; flex-direction: column; height: 100%; }
-/* the plan | scene split (see components/focus.css) and the sidebar */
-.main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; padding: 0 12px 12px; min-height: 0; }
+/* the plan | scene split (see components/focus.css) and the sidebar; .side carries the 12px gap so it can fold to nothing */
+.main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0 12px 12px; min-height: 0; position: relative; }
+.side { width: 312px; padding-left: 12px; min-height: 0; display: flex; overflow: hidden; transition: width 0.2s ease, padding-left 0.2s ease; }
+.main.side-closed .side { width: 0; padding-left: 0; }
+/* the slim pink tab on the right edge that brings the panel back */
+.side-tab { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 28px; padding: 10px 0 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--pink); color: #fff; border-radius: 10px 0 0 10px; box-shadow: 0 4px 14px rgba(229, 64, 122, 0.35); transition: width 0.15s, background 0.15s; z-index: 6; }
+.side-tab:hover, .side-tab:focus-visible { width: 32px; background: #d2306a; outline: none; }
+.side-tab-chev { font-size: 16px; font-weight: 900; line-height: 1; }
+.side-tab-text { writing-mode: vertical-rl; font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
 .pane { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); position: relative; min-height: 0; overflow: hidden; }
 
 /* top bar */
@@ -99,7 +106,10 @@ kbd { background: #f1ece6; border-radius: 4px; padding: 0 5px; font-family: inhe
 .walk-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(47,42,38,0.8); color: #fff; font-size: 11px; padding: 5px 10px; border-radius: 999px; pointer-events: none; }
 
 /* sidebar */
-.sidebar { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.sidebar { width: 300px; flex: none; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.sidebar-head { display: flex; justify-content: flex-end; margin-bottom: -6px; }
+.sidebar-hide { width: 24px; height: 20px; border-radius: 6px; color: var(--muted); font-size: 15px; font-weight: 800; line-height: 1; display: grid; place-items: center; }
+.sidebar-hide:hover { background: var(--pink-soft); color: var(--pink); }
 .card { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
 .card.selection { border: 1.5px solid var(--orange); }
 .sel-head { display: flex; align-items: center; gap: 8px; }
@@ -119,7 +129,7 @@ kbd { background: #f1ece6; border-radius: 4px; padding: 0 5px; font-family: inhe
 .chip:hover { background: #e7e0d8; }
 .chip.ghost { background: #fff; border: 1px solid var(--line); }
 .chip.solid { background: #2f2a26; color: #fff; }
-.dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
+.dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; align-items: end; }
 .dims-grid label { font-size: 10px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
 .dims-grid input, .text { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbf9f6; font-weight: 700; color: var(--ink); }
 .text { flex: 1; font-weight: 600; }
@@ -142,7 +152,8 @@ kbd { background: #f1ece6; border-radius: 4px; padding: 0 5px; font-family: inhe
 .footnote { font-size: 10.5px; color: var(--muted); padding: 0 6px 6px; }
 
 @media (max-width: 1100px) {
-  .main { grid-template-columns: minmax(0, 1fr) 260px; }
+  .side { width: 272px; }
+  .sidebar { width: 260px; }
   .topbar { grid-template-columns: fit-content(210px) 1fr auto; }
   .topbar .group-chip { display: none; }
 }
@@ -150,14 +161,31 @@ kbd { background: #f1ece6; border-radius: 4px; padding: 0 5px; font-family: inhe
   body { overflow: auto; }
   .main { grid-template-columns: 1fr; grid-auto-rows: minmax(360px, auto); }
   .topbar { height: auto; grid-template-columns: 1fr; gap: 6px; padding: 10px 12px; }
-  .sidebar { overflow: visible; }
+  .side { width: auto; padding: 12px 0 0; overflow: visible; }
+  .main.side-closed .side { display: none; }
+  .sidebar { width: auto; flex: 1; overflow: visible; }
+  .side-tab { top: auto; bottom: 24px; transform: none; }
 }
 
-/* editing controls */
-.card-toggle { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 0; }
-.card-toggle h4 { margin: 0; flex: 1; }
-.chev { color: var(--muted); font-size: 11px; }
+/* collapsible cards (components/Card.tsx): header row, then the body */
+.card-toggle { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 0; border-radius: 6px; }
+.card-toggle h4 { margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+.card-toggle:hover h4, .card-toggle:hover .chev { color: var(--ink); }
+.card-extra { flex: 0 1 auto; min-width: 0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chev { color: var(--muted); font-size: 11px; flex: none; }
+.card-body { margin-top: 6px; }
+.card.closed { padding-top: 10px; padding-bottom: 10px; }
 .card-toggle + form, .card-toggle + .room-form { margin-top: 8px; }
+/* sub-sections inside a card (Windows / Doors / …) */
+.section-toggle { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 0; margin-top: 10px; }
+.section-toggle h5 { margin: 0; flex: 1; }
+.section-toggle:hover h5, .section-toggle:hover .chev { color: var(--ink); }
+.subsection .section-body > h5:first-child { margin-top: 4px; }
+/* the closets rows bring their own heading; the section header stands in for it */
+[data-section="room.closets"] .section-body > h5:first-child { display: none; }
+/* lock button in the Selected card */
+.chip.lock.on { background: #2f2a26; color: #fff; }
+.lock-note { align-self: center; }
 .swatch-input { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; flex: none; }
 .swatch-input::-webkit-color-swatch-wrapper { padding: 2px; }
 .swatch-input::-webkit-color-swatch { border: 0; border-radius: 4px; }

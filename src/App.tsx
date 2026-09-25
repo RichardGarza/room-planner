@@ -8,6 +8,7 @@ import { SplitPane, useSplit } from './components/SplitPane'
 import { TopBar } from './components/TopBar'
 import { useLibrary } from './library'
 import { useStore, type OutsideAngle } from './store'
+import { useSidebar } from './components/Collapse'
 import './components/focus.css'
 
 const ANGLES: { id: OutsideAngle; label: string }[] = [
@@ -51,9 +52,17 @@ export default function App() {
         useSplit.getState().toggleFocus()
         return
       }
+      if (e.key === '\\' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        useSidebar.getState().toggle()
+        return
+      }
       if (e.key === 'Escape') st.select(null)
       if (!st.selectedId) return
-      if (e.key === 'r' || e.key === 'R') st.rotateItem(st.selectedId, e.shiftKey ? -90 : 90)
+      const sel = st.items.find((i) => i.id === st.selectedId)
+      if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey) st.toggleLock(st.selectedId)
+      // a locked piece stays put: R does nothing to it
+      if ((e.key === 'r' || e.key === 'R') && !sel?.locked) st.rotateItem(st.selectedId, e.shiftKey ? -90 : 90)
       if (e.key === 'Delete' || e.key === 'Backspace') st.toggleInRoom(st.selectedId)
     }
     window.addEventListener('keydown', onKey)
@@ -79,6 +88,8 @@ function Planner() {
   const focus = useSplit((s) => s.focus)
   const setFocus = useSplit((s) => s.setFocus)
   const openPrint = usePrintDialog((s) => s.setOpen)
+  const sideOpen = useSidebar((s) => s.open)
+  const showSide = useSidebar((s) => s.setOpen)
 
   const plan = (
     <>
@@ -101,9 +112,9 @@ function Planner() {
       <FloorPlan />
       {selected && (
         <div className="item-toolbar">
-          <span>{selected.name.split(' ').slice(0, 2).join(' ')}</span>
-          <button onClick={() => rotateItem(selected.id, -90)} title="Rotate left">↺</button>
-          <button onClick={() => rotateItem(selected.id, 90)} title="Rotate right">↻</button>
+          <span>{selected.locked && <span aria-label="Locked" title="Locked in place">🔒 </span>}{selected.name.split(' ').slice(0, 2).join(' ')}</span>
+          <button onClick={() => rotateItem(selected.id, -90)} disabled={!!selected.locked} title={selected.locked ? 'Locked' : 'Rotate left'}>↺</button>
+          <button onClick={() => rotateItem(selected.id, 90)} disabled={!!selected.locked} title={selected.locked ? 'Locked' : 'Rotate right'}>↻</button>
           <button onClick={() => toggleInRoom(selected.id)} title={selected.inRoom ? 'Take out' : 'Put back'}>{selected.inRoom ? '→' : '←'}</button>
         </div>
       )}
@@ -143,9 +154,17 @@ function Planner() {
   return (
     <div className="app">
       <TopBar />
-      <main className="main">
+      <main className={`main${sideOpen ? '' : ' side-closed'}`}>
         <SplitPane leftClassName="pane plan-pane" rightClassName="pane scene-pane" left={plan} right={scene} />
-        <Sidebar />
+        <div className="side" aria-hidden={!sideOpen} inert={!sideOpen}>
+          <Sidebar />
+        </div>
+        {!sideOpen && (
+          <button type="button" className="side-tab" onClick={() => showSide(true)} title="Show the side panel (\)" aria-label="Show the side panel">
+            <span className="side-tab-chev" aria-hidden="true">‹</span>
+            <span className="side-tab-text">Settings</span>
+          </button>
+        )}
       </main>
       <PrintDialog />
     </div>

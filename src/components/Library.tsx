@@ -67,7 +67,7 @@ export function Library() {
   const existingHint = loading
     ? 'Loading your rooms…'
     : rooms.length === 0
-      ? 'Nothing saved yet — import a JSON file or start a new room'
+      ? 'Nothing saved yet — start a new room or import a room file'
       : `${rooms.length} saved room${rooms.length === 1 ? '' : 's'} · pick up where you left off`
 
   return (
@@ -121,7 +121,7 @@ export function Library() {
               aria-label="Search rooms"
             />
             <UnitToggle />
-            <button className="chip ghost" onClick={() => void importDoc()}>Import JSON</button>
+            <button className="chip ghost" onClick={() => void importDoc()} title="Open a room file exported with Export JSON — to move a room between computers or restore a backup">Import room file</button>
           </div>
         </div>
 
@@ -233,7 +233,7 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
         <div className="dims-grid">
           <label>Width<LengthInput min={150} max={1200} value={w} disabled={fixed} onCommit={commit(setW)} /></label>
           <label>Depth<LengthInput min={150} max={1200} value={d} disabled={fixed} onCommit={commit(setD)} /></label>
-          <label>Height<LengthInput min={200} max={400} value={h} disabled={fixed} onCommit={commit(setH)} /></label>
+          <label>Ceiling height<LengthInput min={200} max={400} value={h} disabled={fixed} onCommit={commit(setH)} /></label>
         </div>
         <div className="lib-start-with" role="radiogroup" aria-labelledby="lib-start-with-label">
           <span id="lib-start-with-label" className="caption">Start with</span>
@@ -338,7 +338,7 @@ function RoomCard({ summary, groups }: { summary: RoomSummary; groups: string[] 
             <button onClick={startRename}>Rename</button>
             <button onClick={startGroup}>Move to group…</button>
             <button onClick={() => { setMode(null); void duplicate(summary.id) }}>Duplicate</button>
-            <button onClick={() => { setMode(null); void exportDoc(summary.id) }}>Export JSON</button>
+            <button onClick={() => { setMode(null); void exportDoc(summary.id) }} title="Save this room as a file you can back up or open on another computer">Export room file</button>
             <button className="danger" onClick={() => setMode('delete')}>Delete</button>
           </div>
         )}

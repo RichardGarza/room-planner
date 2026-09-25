@@ -37,6 +37,8 @@ export function FloorPlan() {
     e.stopPropagation()
     const p = toRoom(e)
     select(it.id)
+    // a locked piece can be picked, but not moved
+    if (it.locked) return
     snapshot()
     setDrag({ id: it.id, dx: it.x - p.x, dy: it.y - p.y })
     ;(e.target as Element).setPointerCapture(e.pointerId)
@@ -303,13 +305,14 @@ function PlanItem({ item, selected, onDown, toRoom, muted }: { item: Item; selec
   const unit = useUnits((s) => s.unit)
   const stroke = selected ? '#f28c28' : '#8f867d'
   const fontSize = Math.min(11, Math.max(7, fw / 6))
+  const locked = !!item.locked
   return (
     <g
-      className={`plan-item${selected ? ' selected' : ''}`}
+      className={`plan-item${selected ? ' selected' : ''}${locked ? ' locked' : ''}`}
       transform={`translate(${item.x} ${item.y})`}
       onPointerDown={(e) => onDown(e, item)}
       opacity={muted ? 0.75 : 1}
-      style={{ cursor: 'grab' }}
+      style={{ cursor: locked ? 'default' : 'grab' }}
     >
       <g transform={`rotate(${item.rot})`}>
         {item.kind === 'rug' ? (
@@ -365,7 +368,42 @@ function PlanItem({ item, selected, onDown, toRoom, muted }: { item: Item; selec
       <text className="plan-item-dim" textAnchor="middle" y={fontSize} fontSize={fontSize * 0.7}>
         {formatLength(item.w, { unit, bare: true })}×{formatLength(item.d, { unit, bare: true })}
       </text>
-      {selected && <RotateHandle item={item} toRoom={toRoom} />}
+      {selected && !locked && <RotateHandle item={item} toRoom={toRoom} />}
+      {locked && <LockBadge item={item} />}
+    </g>
+  )
+}
+
+/** radius of the padlock badge at a locked piece's top-right corner (plan cm) */
+const LOCK_R = 7
+
+/**
+ * A small padlock just inside the top-right corner of a locked piece's footprint (its bounding
+ * box, so it stays upright and in the same corner however the piece is turned). It sits inside
+ * the shape so a piece against a wall keeps it clear of the wall stroke. Clicking it unlocks.
+ */
+function LockBadge({ item }: { item: Item }) {
+  const toggleLock = useStore((s) => s.toggleLock)
+  const r = rectOf(item)
+  const inset = LOCK_R + 2
+  const cx = r.x1 - item.x - inset
+  const cy = r.y0 - item.y + inset
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+  return (
+    <g
+      className="lock-badge"
+      transform={`translate(${cx} ${cy})`}
+      onPointerDown={stop}
+      onClick={(e) => { e.stopPropagation(); toggleLock(item.id) }}
+      style={{ cursor: 'pointer' }}
+      role="button"
+      aria-label="Locked in place — click to unlock"
+    >
+      <title>Locked in place — click to unlock</title>
+      <circle r={LOCK_R} fill="#2f2a26" stroke="#fff" strokeWidth={1.2} />
+      {/* shackle and body */}
+      <path d={`M ${-LOCK_R * 0.3} ${-LOCK_R * 0.1} V ${-LOCK_R * 0.35} A ${LOCK_R * 0.3} ${LOCK_R * 0.3} 0 0 1 ${LOCK_R * 0.3} ${-LOCK_R * 0.35} V ${-LOCK_R * 0.1}`} fill="none" stroke="#fff" strokeWidth={1.1} strokeLinecap="round" />
+      <rect x={-LOCK_R * 0.45} y={-LOCK_R * 0.1} width={LOCK_R * 0.9} height={LOCK_R * 0.6} rx={1} fill="#fff" />
     </g>
   )
 }
