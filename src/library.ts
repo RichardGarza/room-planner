@@ -84,7 +84,7 @@ export const SEEDED_KEY = 'room-planner.seeded'
 export const EXAMPLE_ID = 'room-example'
 /** Per-document flag: this seed was added once. It stays after the room is deleted. */
 export const seedKey = (id: string) => `${SEEDED_KEY}.${id}`
-export const AUTOSAVE_MS = 700
+export const AUTOSAVE_MS = 400
 
 /* ---------- helpers ---------- */
 

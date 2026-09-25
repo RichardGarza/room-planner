@@ -217,7 +217,7 @@ export function migrateLayouts(raw: unknown, room: Pick<Room, 'w' | 'd'>): Layou
   return out
 }
 
-const DEFAULT_SETTINGS: RoomDoc['settings'] = { daytime: true, doorAngle: 70, blinds: 40, bedding: true, walkHeight: 'adult', quality: 'best' }
+const DEFAULT_SETTINGS: RoomDoc['settings'] = { daytime: true, doorAngle: 70, blinds: 40, bedding: true, walkHeight: 'adult', quality: 'best', lookSensitivity: 1 }
 
 function migrateSettings(raw: unknown): RoomDoc['settings'] {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -228,6 +228,7 @@ function migrateSettings(raw: unknown): RoomDoc['settings'] {
     bedding: boolOf(o.bedding, DEFAULT_SETTINGS.bedding),
     walkHeight: o.walkHeight === 'child' ? 'child' : 'adult',
     quality: o.quality === 'fast' ? 'fast' : 'best',
+    lookSensitivity: clampNum(num(o.lookSensitivity, 1), 0.25, 2),
   }
 }
 

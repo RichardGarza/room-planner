@@ -22,6 +22,8 @@ interface Settings {
   bedding: boolean
   walkHeight: 'adult' | 'child'
   quality: 'best' | 'fast'
+  /** walk-mode mouse look multiplier (1 = default) */
+  lookSensitivity: number
 }
 
 export interface NewItemSpec {
@@ -61,7 +63,9 @@ interface State extends Settings {
   /** Sets an item's angle outright (degrees, any value; normalised to [0, 360)). */
   setRotation: (id: string, deg: number) => void
   resizeItem: (id: string, size: Partial<Pick<Item, 'w' | 'd' | 'h'>>) => void
-  updateItem: (id: string, patch: Partial<Pick<Item, 'name' | 'color' | 'kind' | 'note'>>) => void
+  updateItem: (id: string, patch: Partial<Pick<Item, 'name' | 'color' | 'kind' | 'note' | 'locked'>>) => void
+  /** Lock or unlock a piece (locked pieces cannot be dragged or rotated). */
+  toggleLock: (id: string) => void
   /** Adds an item (at the given centre, else the room centre) and returns its id. */
   addItem: (spec: NewItemSpec, at?: { x: number; y: number }) => string
   removeItem: (id: string) => void
@@ -339,6 +343,7 @@ export const useStore = create<State>((set, get) => ({
   bedding: true,
   walkHeight: 'adult',
   quality: 'best',
+  lookSensitivity: 1,
   ...init.settings,
 
   select: (id) => set({ selectedId: id }),
@@ -394,6 +399,9 @@ export const useStore = create<State>((set, get) => ({
       })
       return { items, activeLayoutId: null, suggestionsStale: true, ...pushHistory(s) }
     }),
+
+  toggleLock: (id) =>
+    set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, locked: !i.locked } : i)), ...pushHistory(s) })),
 
   updateItem: (id, patch) =>
     set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, ...patch } : i)), activeLayoutId: null, ...pushHistory(s) })),
@@ -561,7 +569,7 @@ export const useStore = create<State>((set, get) => ({
       room: s.room,
       items: s.items,
       layouts: s.savedLayouts,
-      settings: { daytime: s.daytime, doorAngle: s.doorAngle, blinds: s.blinds, bedding: s.bedding, walkHeight: s.walkHeight, quality: s.quality },
+      settings: { daytime: s.daytime, doorAngle: s.doorAngle, blinds: s.blinds, bedding: s.bedding, walkHeight: s.walkHeight, quality: s.quality, lookSensitivity: s.lookSensitivity },
     }
   },
 }))

@@ -14,6 +14,7 @@ export type ItemKind =
   | 'nightstand'
   | 'sofa'
   | 'table'
+  | 'plant'
   | 'box'
 
 /** All lengths are centimetres. x runs left→right, y runs top→bottom on the plan. */
@@ -34,6 +35,8 @@ export interface Item {
   inRoom: boolean
   /** free text shown in the selection panel */
   note?: string
+  /** a locked piece stays put: no drag, no rotate, and layout suggestions arrange around it */
+  locked?: boolean
 }
 
 export interface Opening {
@@ -153,6 +156,8 @@ export interface RoomDoc {
     bedding: boolean
     walkHeight: 'adult' | 'child'
     quality: 'best' | 'fast'
+    /** walk-mode mouse look multiplier, 0.25..2 (1 = default) */
+    lookSensitivity?: number
   }
   /** schema version for future migrations */
   version: number

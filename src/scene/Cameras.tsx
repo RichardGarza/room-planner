@@ -95,6 +95,7 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
   const invalidate = useThree((s) => s.invalidate)
   const keys = useRef<Set<string>>(new Set())
   const walkHeight = useStore((s) => s.walkHeight)
+  const lookScale = useStore((s) => s.lookSensitivity ?? 1)
 
   useEffect(() => {
     const el = gl.domElement
@@ -106,7 +107,7 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       const dx = e.clientX - last.x, dy = e.clientY - last.y
       last = { x: e.clientX, y: e.clientY }
       const p = useStore.getState().walkPose
-      useStore.getState().setWalkPose({ yaw: p.yaw - dx * LOOK_SENSITIVITY, pitch: THREE.MathUtils.clamp(p.pitch - dy * LOOK_SENSITIVITY, -1.2, 1.2) })
+      useStore.getState().setWalkPose({ yaw: p.yaw - dx * LOOK_SENSITIVITY * lookScale, pitch: THREE.MathUtils.clamp(p.pitch - dy * LOOK_SENSITIVITY * lookScale, -1.2, 1.2) })
       invalidate()
     }
     const up = () => { last = null }
