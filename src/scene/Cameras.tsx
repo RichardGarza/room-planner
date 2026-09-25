@@ -10,28 +10,39 @@ import { cm } from './util'
 /* --------------------------------- cameras -------------------------------- */
 
 /**
- * The corner preset stands at a corner facing the door wall, so the door is one of the two
- * visible walls (the two walls nearest the camera are hidden). Of the two corners that face the
- * door wall it prefers the one whose other visible wall has a window, then a closet, and
- * otherwise the corner diagonally opposite the door's own end of its wall.
+ * The corner preset stands outside a corner looking across the room, so the two far walls are the
+ * ones on show. It prefers a corner that shows the window wall (the room's hero view: the window,
+ * its blinds and the daylight on the wall beside it), and of the two corners that do, the one whose
+ * other visible wall has the door, then a closet, otherwise the corner across from the window so it
+ * is seen face on. With no window it frames the door wall the same way; with neither it stands at
+ * the bottom left. The "Door side" preset is the one that always faces the door.
  */
 function cornerFor(room: Room): [number, number, number] {
   const W = cm(room.w), D = cm(room.d)
-  const door = room.doors[0]
   const dx = 1.9, dz = 2.2, y = 3.6
-  if (!door) return [-dx, y, D + dz]
-  const has = (wall: Wall) => (room.windows.some((w) => w.wall === wall) ? 2 : 0) + ((room.closets ?? []).some((c) => c.wall === wall) ? 1 : 0)
-  const mid = door.offset + door.width / 2
-  if (door.wall === 'top' || door.wall === 'bottom') {
-    const z = door.wall === 'top' ? D + dz : -dz
-    const scoreLeft = has('right'), scoreRight = has('left') // a camera on the left sees the right wall
-    const left = scoreLeft !== scoreRight ? scoreLeft > scoreRight : mid > room.w / 2
-    return [left ? -dx : W + dx, y, z]
+  const closets = room.closets ?? []
+  const hero = room.windows[0] ?? room.doors[0]
+  // a camera on the left sees the right wall, one at the bottom sees the top wall
+  const corners: { x: 'left' | 'right'; z: 'top' | 'bottom' }[] = [
+    { x: 'left', z: 'bottom' }, { x: 'right', z: 'bottom' }, { x: 'left', z: 'top' }, { x: 'right', z: 'top' },
+  ]
+  const score = (c: (typeof corners)[number]) => {
+    const seen: Wall[] = [c.x === 'left' ? 'right' : 'left', c.z === 'bottom' ? 'top' : 'bottom']
+    const walls = (list: { wall: Wall }[]) => seen.filter((wall) => list.some((o) => o.wall === wall)).length
+    let s = walls(room.windows) * 100 + walls(room.doors) * 10 + walls(closets)
+    if (hero) {
+      const mid = hero.offset + hero.width / 2
+      const across = hero.wall === 'top' || hero.wall === 'bottom' ? (mid > room.w / 2 ? 'left' : 'right') === c.x : (mid > room.d / 2 ? 'top' : 'bottom') === c.z
+      if (across) s += 0.5
+    }
+    return s
   }
-  const x = door.wall === 'left' ? W + dx : -dx
-  const scoreTop = has('bottom'), scoreBottom = has('top') // a camera at the top sees the bottom wall
-  const top = scoreTop !== scoreBottom ? scoreTop > scoreBottom : mid > room.d / 2
-  return [x, y, top ? -dz : D + dz]
+  let best = corners[0], bestScore = -1
+  for (const c of corners) {
+    const s = score(c)
+    if (s > bestScore) { best = c; bestScore = s }
+  }
+  return [best.x === 'left' ? -dx : W + dx, y, best.z === 'top' ? -dz : D + dz]
 }
 
 export const anglePositions = (room: Room): Record<OutsideAngle, [number, number, number]> => {

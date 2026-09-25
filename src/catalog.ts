@@ -18,6 +18,7 @@ export const categories: string[] = [
   'Bookcases & shelves',
   'Rugs',
   'Kids & other',
+  'Indoor plants',
 ]
 
 const white = '#f7f4ef'
@@ -29,6 +30,9 @@ const blue = '#bcd3e8'
 const grey = '#cfd3d8'
 const navy = '#5f6f86'
 const walnut = '#3d3733'
+const leaf = '#6f8f5a'
+const deepLeaf = '#4f7a48'
+const lightLeaf = '#8aa36b'
 
 function preset(category: string, id: string, name: string, kind: ItemKind, w: number, d: number, h: number, color: string, note?: string): CatalogEntry {
   return note ? { id, name, kind, category, w, d, h, color, note } : { id, name, kind, category, w, d, h, color }
@@ -109,6 +113,16 @@ export const catalog: CatalogEntry[] = [
   preset('Kids & other', 'treadmill', 'Treadmill', 'box', 180, 80, 140, grey),
   preset('Kids & other', 'radiator-cover', 'Radiator cover', 'box', 120, 20, 80, white, 'Sits over the radiator; keep the top free.'),
   preset('Kids & other', 'floor-lamp', 'Floor lamp', 'box', 30, 30, 160, cream),
+
+  // Indoor plants — w × d is how wide the leaves spread, h the total height with the pot
+  preset('Indoor plants', 'olive-baby', 'Baby olive tree in pot', 'plant', 60, 60, 150, leaf, 'Young olive tree in a terracotta pot.'),
+  preset('Indoor plants', 'olive-tall', 'Olive tree, taller', 'plant', 80, 80, 200, leaf, 'Standard olive tree in a terracotta pot; check the ceiling height.'),
+  preset('Indoor plants', 'fiddle-leaf-fig', 'Fiddle-leaf fig', 'plant', 70, 70, 180, deepLeaf, 'Big glossy leaves; likes a bright spot near the window.'),
+  preset('Indoor plants', 'potted-shrub', 'Potted shrub', 'plant', 50, 50, 80, lightLeaf),
+  preset('Indoor plants', 'snake-plant', 'Snake plant', 'plant', 30, 30, 90, deepLeaf, 'Upright sword leaves; fine on a dresser or in a corner.'),
+  preset('Indoor plants', 'small-palm', 'Small palm', 'plant', 90, 90, 170, lightLeaf, 'Fronds spread wide; leave room around it.'),
+  preset('Indoor plants', 'monstera', 'Monstera', 'plant', 80, 80, 120, deepLeaf, 'Split leaves that spread wider than the pot.'),
+  preset('Indoor plants', 'room-bush', 'Room bush', 'plant', 100, 100, 110, lightLeaf, 'A big rounded shrub for an empty corner.'),
 ]
 
 export function findPreset(id: string): CatalogEntry | undefined {

@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { catalog, categories, findPreset } from '../catalog'
 import type { ItemKind } from '../types'
 
-const KINDS: ItemKind[] = ['bed', 'chair', 'desk', 'shelf', 'dresser', 'wardrobe', 'bookcase', 'rug', 'rugRect', 'nightstand', 'sofa', 'table', 'box']
+const KINDS: ItemKind[] = ['bed', 'chair', 'desk', 'shelf', 'dresser', 'wardrobe', 'bookcase', 'rug', 'rugRect', 'nightstand', 'sofa', 'table', 'plant', 'box']
 
 describe('catalog', () => {
-  it('has between 40 and 60 presets', () => {
+  it('has between 40 and 80 presets', () => {
     expect(catalog.length).toBeGreaterThanOrEqual(40)
-    expect(catalog.length).toBeLessThanOrEqual(60)
+    expect(catalog.length).toBeLessThanOrEqual(80)
   })
 
   it('uses unique kebab-case ids', () => {
@@ -41,6 +41,22 @@ describe('catalog', () => {
       if (p.kind === 'rug' || p.name.includes('Ø')) expect(p.w, p.id).toBe(p.d)
       if (p.kind === 'rug' || p.kind === 'rugRect') expect(p.h, p.id).toBeLessThanOrEqual(2)
     }
+  })
+
+  it('keeps the indoor plants last, all of kind plant, and nothing else of that kind', () => {
+    expect(categories[categories.length - 1]).toBe('Indoor plants')
+    const plants = catalog.filter((p) => p.category === 'Indoor plants')
+    expect(plants.length).toBeGreaterThanOrEqual(8)
+    for (const p of plants) {
+      expect(p.kind, p.id).toBe('plant')
+      expect(p.w, p.id).toBe(p.d)
+    }
+    for (const p of catalog) if (p.kind === 'plant') expect(p.category, p.id).toBe('Indoor plants')
+    expect(plants.map((p) => p.name)).toContain('Baby olive tree in pot')
+    expect(plants.map((p) => p.name)).toContain('Room bush')
+    expect(findPreset('olive-baby')).toMatchObject({ kind: 'plant', w: 60, d: 60, h: 150 })
+    expect(findPreset('olive-baby')?.note).toMatch(/olive tree.*terracotta/i)
+    expect(findPreset('room-bush')).toMatchObject({ kind: 'plant', w: 100, d: 100, h: 110 })
   })
 
   it('finds presets by id', () => {
