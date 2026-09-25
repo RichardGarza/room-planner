@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react'
 import type { ItemKind, Room, Wall } from '../types'
 import { runChecks } from '../checks'
 import { presetLayouts } from '../data'
+import { catalog, categories } from '../catalog'
 import { footprint, rectOf } from '../geometry'
+import { findFreeSpot, isRugKind } from '../placement'
 import { useStore, type NewItemSpec } from '../store'
 import type { Check } from '../types'
 
@@ -43,7 +45,7 @@ export function Sidebar() {
         )}
       </section>
 
-      <AddFurniture />
+      <FurniturePalette />
       <RoomCard />
       <DisplaySettings />
       <SavedLayouts />
@@ -130,12 +132,16 @@ function SelectionCard({ id }: { id: string }) {
 const KINDS: { id: ItemKind; label: string }[] = [
   { id: 'bed', label: 'Bed' },
   { id: 'chair', label: 'Chair' },
-  { id: 'desk', label: 'Desk / table' },
+  { id: 'desk', label: 'Desk' },
+  { id: 'table', label: 'Table' },
+  { id: 'sofa', label: 'Sofa / armchair' },
   { id: 'shelf', label: 'Shelf' },
   { id: 'bookcase', label: 'Bookcase' },
   { id: 'dresser', label: 'Dresser' },
+  { id: 'nightstand', label: 'Nightstand' },
   { id: 'wardrobe', label: 'Wardrobe' },
   { id: 'rug', label: 'Round rug' },
+  { id: 'rugRect', label: 'Rectangular rug' },
   { id: 'box', label: 'Plain box' },
 ]
 
@@ -146,11 +152,29 @@ const WALLS: { id: Wall; label: string }[] = [
   { id: 'right', label: 'Right wall' },
 ]
 
-function AddFurniture() {
-  const addItem = useStore((s) => s.addItem)
-  const [open, setOpen] = useState(false)
+/** Adds a new item at a free spot (against a wall when possible) and turns its back to that wall. */
+function placeNew(spec: NewItemSpec) {
+  const s = useStore.getState()
+  const spot = findFreeSpot(s.room, s.items, spec.w, spec.d, { h: spec.h, prefer: isRugKind(spec.kind) ? 'centre' : 'wall' })
+  const id = s.addItem(spec, spot)
+  if (spot.rot) s.rotateItem(id, spot.rot === 270 ? -90 : spot.rot)
+  // addItem clamps the unturned footprint into the room first, so put it back on the exact spot
+  s.moveItem(id, spot.x, spot.y)
+  return id
+}
+
+function FurniturePalette() {
+  const [open, setOpen] = useState(true)
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('All')
+  const [customOpen, setCustomOpen] = useState(false)
   const [spec, setSpec] = useState<NewItemSpec>({ name: '', kind: 'box', w: 80, d: 40, h: 75, color: '#f7f4ef' })
   const upd = <K extends keyof NewItemSpec>(k: K, v: NewItemSpec[K]) => setSpec((p) => ({ ...p, [k]: v }))
+
+  const q = query.trim().toLowerCase()
+  const visible = catalog.filter((p) => (category === 'All' || p.category === category) && (!q || p.name.toLowerCase().includes(q)))
+  const groups = categories.map((c) => ({ c, presets: visible.filter((p) => p.category === c) })).filter((g) => g.presets.length > 0)
+
   return (
     <section className="card">
       <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
@@ -158,28 +182,66 @@ function AddFurniture() {
         <span className="chev">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <form
-          onSubmit={(e) => { e.preventDefault(); addItem(spec); setSpec((p) => ({ ...p, name: '' })) }}
-        >
-          <div className="row">
-            <input className="text" placeholder="Name, e.g. Toy chest" value={spec.name} onChange={(e) => upd('name', e.target.value)} />
-            <input type="color" className="swatch-input" value={spec.color} onChange={(e) => upd('color', e.target.value)} title="Colour" />
+        <div className="palette">
+          <input className="text palette-search" type="search" placeholder="Search, e.g. wardrobe" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <div className="palette-cats">
+            {['All', ...categories].map((c) => (
+              <button key={c} className={`chip${category === c ? ' on' : ''}`} onClick={() => setCategory(c)}>{c}</button>
+            ))}
           </div>
-          <label className="field">
-            Type
-            <select value={spec.kind} onChange={(e) => upd('kind', e.target.value as ItemKind)}>
-              {KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
-            </select>
-          </label>
-          <div className="dims-grid">
-            <label>Width (cm)<input type="number" value={spec.w} min={5} max={600} onChange={(e) => upd('w', +e.target.value)} /></label>
-            <label>Depth (cm)<input type="number" value={spec.d} min={5} max={600} onChange={(e) => upd('d', +e.target.value)} /></label>
-            <label>Height (cm)<input type="number" value={spec.h} min={1} max={400} onChange={(e) => upd('h', +e.target.value)} /></label>
-          </div>
-          <div className="row">
-            <button className="chip solid" type="submit">Add to the room</button>
-          </div>
-        </form>
+          <ul className="palette-list">
+            {groups.length === 0 && <li className="palette-empty muted small">Nothing matches "{query.trim()}". Try the custom size below.</li>}
+            {groups.map((g) => (
+              <li key={g.c}>
+                {groups.length > 1 && <div className="palette-group">{g.c}</div>}
+                <ul>
+                  {g.presets.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        className="palette-row"
+                        title={p.note ?? `Add ${p.name}`}
+                        onClick={() => placeNew({ name: p.name, kind: p.kind, w: p.w, d: p.d, h: p.h, color: p.color, note: p.note })}
+                      >
+                        <span className="swatch" style={{ background: p.color }} />
+                        <span className="palette-name">{p.name}</span>
+                        <span className="palette-dims">{p.w}×{p.d}×{p.h}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+          <p className="muted small">Click a row to add it. New things land against a free wall, clear of the door. Select one and press Delete to take it out.</p>
+          <button className="palette-custom-toggle" onClick={() => setCustomOpen((o) => !o)}>
+            <span className="chev">{customOpen ? '▾' : '▸'}</span> Custom size…
+          </button>
+          {customOpen && (
+            <form
+              className="palette-custom"
+              onSubmit={(e) => { e.preventDefault(); placeNew(spec); setSpec((p) => ({ ...p, name: '' })) }}
+            >
+              <div className="row">
+                <input className="text" placeholder="Name, e.g. Toy chest" value={spec.name} onChange={(e) => upd('name', e.target.value)} />
+                <input type="color" className="swatch-input" value={spec.color} onChange={(e) => upd('color', e.target.value)} title="Colour" />
+              </div>
+              <label className="field">
+                Type
+                <select value={spec.kind} onChange={(e) => upd('kind', e.target.value as ItemKind)}>
+                  {KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
+                </select>
+              </label>
+              <div className="dims-grid">
+                <label>Width (cm)<input type="number" value={spec.w} min={5} max={600} onChange={(e) => upd('w', +e.target.value)} /></label>
+                <label>Depth (cm)<input type="number" value={spec.d} min={5} max={600} onChange={(e) => upd('d', +e.target.value)} /></label>
+                <label>Height (cm)<input type="number" value={spec.h} min={1} max={400} onChange={(e) => upd('h', +e.target.value)} /></label>
+              </div>
+              <div className="row">
+                <button className="chip solid" type="submit">Add to the room</button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
     </section>
   )

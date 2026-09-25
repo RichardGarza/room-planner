@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { doorSwing, footprint, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
+import { isRugKind } from '../placement'
 import { useStore } from '../store'
 import type { Item, Room, Wall } from '../types'
 
@@ -82,11 +83,11 @@ export function FloorPlan() {
           return <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="url(#hatch)" stroke="#a89f95" strokeWidth={0.8} />
         })()}
 
-        {/* rug + solid items */}
-        {items.filter((i) => i.inRoom && i.kind === 'rug').map((it) => (
+        {/* rugs first, then solid items */}
+        {items.filter((i) => i.inRoom && isRugKind(i.kind)).map((it) => (
           <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
         ))}
-        {items.filter((i) => i.inRoom && i.kind !== 'rug').map((it) => (
+        {items.filter((i) => i.inRoom && !isRugKind(i.kind)).map((it) => (
           <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
         ))}
 
@@ -217,6 +218,10 @@ function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boo
       <g transform={`rotate(${item.rot})`}>
         {item.kind === 'rug' ? (
           <circle r={item.w / 2} fill={item.color} opacity={0.55} stroke={stroke} strokeWidth={selected ? 2 : 0} />
+        ) : item.kind === 'rugRect' ? (
+          <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={item.d} rx={4} fill={item.color} opacity={0.55} stroke={stroke} strokeWidth={selected ? 2 : 0} />
+        ) : item.kind === 'table' && item.w === item.d ? (
+          <circle r={item.w / 2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
         ) : (
           <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={item.d} rx={2} fill={item.color} stroke={stroke} strokeWidth={selected ? 2 : 1} />
         )}
@@ -230,6 +235,32 @@ function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boo
         {item.kind === 'chair' && <circle r={item.w / 2 - 4} fill="none" stroke="#9a8f86" strokeWidth={1} />}
         {(item.kind === 'wardrobe' || item.kind === 'dresser') && (
           <line x1={0} y1={-item.d / 2} x2={0} y2={item.d / 2} stroke="#b7ada3" strokeWidth={0.8} />
+        )}
+        {item.kind === 'nightstand' && (
+          <>
+            <line x1={-item.w / 2 + 3} y1={0} x2={item.w / 2 - 3} y2={0} stroke="#b7ada3" strokeWidth={0.8} />
+            <circle cx={0} cy={item.d / 4} r={1.5} fill="#b7ada3" />
+          </>
+        )}
+        {item.kind === 'sofa' && (() => {
+          const arm = Math.min(18, item.w * 0.12), back = Math.min(20, item.d * 0.25)
+          const inner = item.w - 2 * arm
+          const n = Math.max(1, Math.round(inner / 70))
+          const y0 = -item.d / 2 + back
+          return (
+            <>
+              <rect x={-item.w / 2} y={-item.d / 2} width={item.w} height={back} fill="#000" opacity={0.07} />
+              <line x1={-item.w / 2} y1={y0} x2={item.w / 2} y2={y0} stroke="#9a8f86" strokeWidth={1} />
+              <line x1={-inner / 2} y1={y0} x2={-inner / 2} y2={item.d / 2} stroke="#9a8f86" strokeWidth={0.8} />
+              <line x1={inner / 2} y1={y0} x2={inner / 2} y2={item.d / 2} stroke="#9a8f86" strokeWidth={0.8} />
+              {Array.from({ length: n }, (_, i) => (
+                <rect key={i} x={-inner / 2 + (i * inner) / n + 2} y={y0 + 3} width={inner / n - 4} height={item.d - back - 8} rx={4} fill="#fff" opacity={0.35} stroke="#9a8f86" strokeWidth={0.6} />
+              ))}
+            </>
+          )
+        })()}
+        {item.kind === 'table' && item.w !== item.d && (
+          <rect x={-item.w / 2 + 5} y={-item.d / 2 + 5} width={item.w - 10} height={item.d - 10} rx={2} fill="none" stroke="#b7ada3" strokeWidth={0.8} />
         )}
       </g>
       <text className="plan-item-name" textAnchor="middle" y={-1} fontSize={fontSize}>
