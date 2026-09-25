@@ -31,7 +31,7 @@ await step('close new room panel', async () => {
 })
 
 await step('open first room', async () => {
-  const card = page.locator('[class*="card"]').filter({ hasText: /cm/ }).first()
+  const card = page.locator('.lib-card').first()
   await card.click({ timeout: 15000 })
 })
 await page.waitForTimeout(2500)
