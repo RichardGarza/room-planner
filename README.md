@@ -8,13 +8,16 @@ Inspired by [this post](https://x.com/scheemunai/status/2103059885361598633), wh
 
 ## What it does
 
-- **Rooms library.** The app opens on your saved rooms. Create a room with a name and a group (for example "Home" or "2027 renovation"), reopen it later, duplicate it, rename it, export it as JSON, or import one. Every change is saved automatically about a second after you stop editing. The first launch seeds an example room.
+- **Start screen.** The app opens with "Start a new room" and "Open an existing room". A new room starts with the basics (door, window, bed, dresser, rug, desk), empty, or as a copy of the example room.
+- **Rooms library.** Your saved rooms live below the start screen. Create a room with a name and a group (for example "Home" or "2027 renovation"), reopen it later, duplicate it, rename it, export it as JSON, or import one. Every change is saved automatically about a second after you stop editing. The first launch seeds an example room.
 - **Floor plan.** Drag items, press `R` to rotate, drag them into the "out of the room" strip to remove them. The selected item shows its distance to the nearest walls.
 - **3D view.** Orbit from outside with the near walls cut away, or walk through the room with the mouse and `WASD`. Day and evening lighting. Click and drag furniture directly in 3D.
 - **Furniture catalogue.** About 55 real-size presets: beds from crib to king, dressers and chests, nightstands, wardrobes, desks and chairs, sofas, tables, bookcases and shelves, rugs, and kids' pieces. New items are placed automatically against a free wall, clear of the door swing. Anything can be renamed, recoloured, resized, or deleted, and "Custom size" adds something that is not in the list.
 - **Windows, doors, radiators.** A room can have any number of each, on any wall, with its own size. Doors have a hinge side and swing in or out of the room.
 - **Checks.** Overlaps, furniture through walls, whether a dresser fits under a window (and by how much), radiator coverage, how far each door can open, passage widths beside the bed, and whether you can still get out of bed.
-- **Layouts.** Preset layouts A, B, C, and "Now" for the example room, plus your own saved layouts per room, undo and redo, and a Share button that puts the whole room in a link.
+- **Suggested layouts.** Every room gets ready-made arrangements. The pink "Suggested layouts" group in the top bar shows the example room's A, B, C presets, or for your own rooms a "Suggest layouts" button that works out up to three arrangements from your furniture: bed against a wall, desk by the window, chair tucked in, nightstands by the bed, rugs in the open floor, nothing in the door swing. The recommended one scored best on the checks. Add, remove, or resize furniture and a Refresh button offers new ones. Your own saved layouts sit underneath, and a one-time hint points new users at the group.
+- **Focus.** Drag the divider between the floor plan and the 3D view to any split, double-click to reset, or use the "Focus 2D / 3D" toggle (or the F key) to give the plan most of the screen while you arrange things. The split is remembered.
+- **Layouts.** Undo and redo, saved layouts per room, and a Share button that puts the whole room in a link.
 - **Display settings.** Door opening angle, blind height, bedding on or off, eye height, render quality.
 
 ## Run it in the browser
@@ -42,6 +45,14 @@ In the Mac app every room is a JSON file in `~/Documents/Room Planner/`, named `
 The app is not code-signed or notarized. The first time you open it, right-click (or Control-click) `Room Planner.app` and choose Open, then confirm. After that it opens normally.
 
 To regenerate the app icon from a 1024×1024 PNG: `npx tauri icon src-tauri/app-icon.png`.
+
+## 3D quality
+
+"Best" adds ambient occlusion, anti-aliasing, a subtle vignette, contact shadows, plaster and fabric bump maps, and in the evening a glow on the lamp. "Fast" renders the same geometry without post-processing at a lower pixel ratio. The canvas only redraws when something changes, which keeps laptops cool.
+
+Daytime is a sun outside the window with crisp shadows and a procedural environment map. Evening is a warm pendant, moonlight through the window, and a glowing shade. The outside world (sky, lawn, hedge, trees, a neighbour's house) is only ever visible through the glass. The floor is procedural oak tinted by the room's floor colour.
+
+Every furniture kind is modelled from primitives: beds with bedding, pillows, and a throw (cribs, toddler and bunk beds too), dressers and wardrobes with drawers, doors, and handles, desks with a lamp and laptop, swivel and dining chairs, sofas, bookcases and cube shelves filled with books, woven rugs, and named extras such as an upright piano, floor lamp, toy chest, bean bag, and treadmill. The item colour drives the bedding, upholstery, or painted surface. A few names matter: "6-drawer" in a dresser name sets the drawer count, and "piano", "lamp", "chest", "bean bag", or "treadmill" pick a silhouette for plain boxes.
 
 ## Windows, doors, and radiators
 
@@ -75,6 +86,9 @@ Vite, React 19, TypeScript, Three.js via react-three-fiber and drei, zustand for
 | `src/data.ts` | The example room, its furniture, preset layouts, `makeEmptyRoom` |
 | `src/catalog.ts` | The furniture catalogue |
 | `src/placement.ts` | `findFreeSpot`: where a new item goes |
+| `src/suggest.ts` | The layout suggestion engine |
+| `src/units.ts` | Unit setting, inch and feet formatting, typed-length parser |
+| `src/seeds.ts` | Rooms seeded into the library on first launch |
 | `src/geometry.ts` | Footprints, overlaps, gaps, door swing and doorway maths |
 | `src/checks.ts` | The rules that produce the checks list |
 | `src/migrate.ts` | Loads rooms saved by older versions |
@@ -83,7 +97,9 @@ Vite, React 19, TypeScript, Three.js via react-three-fiber and drei, zustand for
 | `src/storage/` | Storage backends: browser local storage and Tauri files |
 | `src/components/Library.tsx` | The home screen |
 | `src/components/FloorPlan.tsx` | SVG floor plan with drag and dimension lines |
-| `src/scene/` | The 3D scene: lights, cameras, walls and openings, floor, furniture |
+| `src/scene/` | The 3D scene: renderer, lights, effects, cameras, walls and openings, outside, floor |
+| `src/scene/furniture/` | Every furniture kind built from primitives, plus materials and props |
+| `src/components/SplitPane.tsx` | The draggable 2D/3D divider and focus toggle |
 | `src/components/Sidebar.tsx` | Layout notes, checks, selection, catalogue, room editor, settings |
 | `src/components/TopBar.tsx` | Back to rooms, room name, layout tabs, save state, undo/redo, share |
 | `src-tauri/` | The Mac app shell, capabilities, and icons |
