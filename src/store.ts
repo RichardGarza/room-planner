@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
-import { CLOSET_HEIGHT, clamp, footprint, frontRecessPad, wallLength } from './geometry'
+import { CLOSET_HEIGHT, clamp, footprint, frontRecessPad, isRugKind, rectOf, wallLength } from './geometry'
 import { migrateRoom, nextOpeningId } from './migrate'
 import { suggestLayouts } from './suggest'
 import type { Closet, Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
@@ -237,19 +237,57 @@ function makeOpening(room: Room, kind: OpeningKind): Opening | Door | Radiator |
   }
 }
 
-function walkStart(room: Room, preset: WalkPreset): WalkPose {
+/** Walking: how close the eye may get to a wall and to a solid piece of furniture (WalkControls uses the same). */
+export const WALK_WALL_GAP = 20
+export const WALK_ITEM_GAP = 12
+
+/** True when a standing point is inside a wall margin or within the item gap of a solid in-room piece. */
+export function walkBlocked(room: Room, items: Item[], px: number, py: number): boolean {
+  if (px < WALK_WALL_GAP || px > room.w - WALK_WALL_GAP || py < WALK_WALL_GAP || py > room.d - WALK_WALL_GAP) return true
+  return items.some((it) => {
+    if (!it.inRoom || isRugKind(it.kind)) return false
+    const r = rectOf(it)
+    return px > r.x0 - WALK_ITEM_GAP && px < r.x1 + WALK_ITEM_GAP && py > r.y0 - WALK_ITEM_GAP && py < r.y1 + WALK_ITEM_GAP
+  })
+}
+
+/**
+ * The pose itself when nothing stands there; otherwise the nearest free cell of a 10 cm grid
+ * within 1.5 m (same yaw and pitch), so a walk preset never starts inside the furniture.
+ */
+export function freeWalkPose(room: Room, items: Item[], pose: WalkPose): WalkPose {
+  if (!walkBlocked(room, items, pose.x, pose.y)) return pose
+  const step = 10
+  const reach = 150
+  const cells: { x: number; y: number; dist: number }[] = []
+  for (let dy = -reach; dy <= reach; dy += step) {
+    for (let dx = -reach; dx <= reach; dx += step) {
+      if (dx === 0 && dy === 0) continue
+      const dist = Math.hypot(dx, dy)
+      if (dist <= reach) cells.push({ x: pose.x + dx, y: pose.y + dy, dist })
+    }
+  }
+  cells.sort((a, b) => a.dist - b.dist)
+  const free = cells.find((c) => !walkBlocked(room, items, c.x, c.y))
+  return free ? { ...pose, x: free.x, y: free.y } : pose
+}
+
+function walkStart(room: Room, items: Item[], preset: WalkPreset): WalkPose {
   // stand just inside the opening, facing away from it
   const o = preset === 'door' ? room.doors[0] : room.windows[0]
-  if (!o) return { x: room.w / 2, y: room.d / 2, yaw: 0, pitch: -0.05 }
+  if (!o) return freeWalkPose(room, items, { x: room.w / 2, y: room.d / 2, yaw: 0, pitch: -0.05 })
   const t = o.offset + o.width / 2
   // stand past the swing of an inward door leaf so it is not filling the view
   const inset = preset === 'door' && (o as Door).swing !== 'out' ? Math.min(o.width + 20, room.d / 3) : 45
-  switch (o.wall) {
-    case 'top': return { x: t, y: inset, yaw: Math.PI, pitch: -0.05 }
-    case 'bottom': return { x: t, y: room.d - inset, yaw: 0, pitch: -0.05 }
-    case 'left': return { x: inset, y: t, yaw: -Math.PI / 2, pitch: -0.05 }
-    case 'right': return { x: room.w - inset, y: t, yaw: Math.PI / 2, pitch: -0.05 }
+  const pose = (): WalkPose => {
+    switch (o.wall) {
+      case 'top': return { x: t, y: inset, yaw: Math.PI, pitch: -0.05 }
+      case 'bottom': return { x: t, y: room.d - inset, yaw: 0, pitch: -0.05 }
+      case 'left': return { x: inset, y: t, yaw: -Math.PI / 2, pitch: -0.05 }
+      case 'right': return { x: room.w - inset, y: t, yaw: Math.PI / 2, pitch: -0.05 }
+    }
   }
+  return freeWalkPose(room, items, pose())
 }
 
 /* ---------- URL sharing ---------- */
@@ -289,7 +327,7 @@ export const useStore = create<State>((set, get) => ({
   suggestionsStale: false,
   view: 'outside',
   outsideAngle: 'corner',
-  walkPose: walkStart(init.room, 'door'),
+  walkPose: walkStart(init.room, init.items, 'door'),
   history: [],
   future: [],
   daytime: true,
@@ -388,7 +426,8 @@ export const useStore = create<State>((set, get) => ({
   setRoom: (patch) =>
     set((s) => {
       const room = sanitizeRoom({ ...s.room, ...patch })
-      return { room, items: fitAll(room, s.items), activeLayoutId: null, suggestionsStale: true, walkPose: walkStart(room, 'door') }
+      const items = fitAll(room, s.items)
+      return { room, items, activeLayoutId: null, suggestionsStale: true, walkPose: walkStart(room, items, 'door') }
     }),
 
   addOpening: (kind) => {
@@ -449,20 +488,21 @@ export const useStore = create<State>((set, get) => ({
     set((s) => {
       const prev = s.history[s.history.length - 1]
       if (!prev) return s
-      return { items: prev, history: s.history.slice(0, -1), future: [s.items, ...s.future], activeLayoutId: null }
+      // the room may have shrunk since that snapshot: keep everything inside the walls
+      return { items: fitAll(s.room, prev), history: s.history.slice(0, -1), future: [s.items, ...s.future], activeLayoutId: null }
     }),
 
   redo: () =>
     set((s) => {
       const next = s.future[0]
       if (!next) return s
-      return { items: next, future: s.future.slice(1), history: [...s.history, s.items], activeLayoutId: null }
+      return { items: fitAll(s.room, next), future: s.future.slice(1), history: [...s.history, s.items], activeLayoutId: null }
     }),
 
   setView: (view) => set({ view }),
   setOutsideAngle: (outsideAngle) => set({ outsideAngle, view: 'outside' }),
   setWalkPose: (p) => set((s) => ({ walkPose: { ...s.walkPose, ...p } })),
-  walkTo: (preset) => set((s) => ({ walkPose: walkStart(s.room, preset), view: 'walk' })),
+  walkTo: (preset) => set((s) => ({ walkPose: walkStart(s.room, s.items, preset), view: 'walk' })),
   setSetting: (k, v) => set({ [k]: v } as Pick<Settings, typeof k>),
 
   shareUrl: () => {
@@ -480,9 +520,11 @@ export const useStore = create<State>((set, get) => ({
     const room = sanitizeRoom({ ...defaultRoom, ...doc.room })
     const items = fitAll(room, doc.items)
     // if the furniture sits exactly where a preset puts it, light up that tab
+    // (park() rewrites the x/y of anything out of the room, so for those only "out" has to match)
     const matches = (l: Layout) => items.every((i) => {
       const p = l.placements[i.id]
-      return p && p.x === i.x && p.y === i.y && p.rot === i.rot && p.inRoom === i.inRoom
+      if (!p || p.inRoom !== i.inRoom) return false
+      return !i.inRoom || (p.x === i.x && p.y === i.y && p.rot === i.rot)
     })
     const preset = items.length ? presetLayouts.find(matches) : undefined
     set({
@@ -497,7 +539,7 @@ export const useStore = create<State>((set, get) => ({
       history: [],
       future: [],
       view: 'outside',
-      walkPose: walkStart(room, 'door'),
+      walkPose: walkStart(room, items, 'door'),
     })
   },
 

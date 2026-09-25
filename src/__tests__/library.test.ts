@@ -12,7 +12,7 @@ class MemoryStorage {
 }
 ;(globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage()
 
-import { AUTOSAVE_MS, EXAMPLE_ID, SEEDED_KEY, roomOpenings, seedKey, timeAgo, useLibrary, type CreateInput } from '../library'
+import { AUTOSAVE_MS, EXAMPLE_ID, SEEDED_KEY, defaultRoomSize, roomOpenings, seedKey, timeAgo, useLibrary, type CreateInput } from '../library'
 import { PARK_Y, useStore } from '../store'
 import { forestsRoom } from '../seeds'
 import { findFreeSpot } from '../placement'
@@ -171,6 +171,64 @@ describe('library', () => {
     await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 10)
     expect(storage.docs.get(id)!.settings.daytime).toBe(false)
     expect(storage.docs.get(id)!.layouts.map((l) => l.name)).toEqual(['Version 1'])
+  })
+
+  it('keeps the edits after a failed autosave and retries on close()', async () => {
+    await useLibrary.getState().refresh()
+    const id = await useLibrary.getState().create({ name: 'Study' })
+    const realSave = storage.save.bind(storage)
+    let fail = true
+    storage.save = async (doc) => { if (fail) throw new Error('disk full'); await realSave(doc) }
+    vi.useFakeTimers()
+    useStore.getState().setRoom({ h: 290 })
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 10)
+    expect(useLibrary.getState().status).toBe('error')
+    expect(useLibrary.getState().error).toMatch(/disk full/)
+    expect(storage.docs.get(id)!.room.h).not.toBe(290)
+    vi.useRealTimers()
+
+    // closing while the disk is still full: the room stays open, the edits stay in the planner
+    await useLibrary.getState().close()
+    expect(useLibrary.getState().currentId).toBe(id)
+    expect(useLibrary.getState().status).toBe('error')
+    expect(useLibrary.getState().error).toMatch(/stays open/)
+    expect(useStore.getState().room.h).toBe(290)
+    // and neither open() nor create() throws the edits away
+    await useLibrary.getState().open(EXAMPLE_ID)
+    expect(useLibrary.getState().currentId).toBe(id)
+    expect(useStore.getState().room.h).toBe(290)
+    await useLibrary.getState().create({ name: 'Another' })
+    expect(useLibrary.getState().currentId).toBe(id)
+    expect(useStore.getState().room.h).toBe(290)
+
+    // once saving works again, close() flushes the pending edits
+    fail = false
+    await useLibrary.getState().close()
+    expect(useLibrary.getState().currentId).toBeNull()
+    expect(storage.docs.get(id)!.room.h).toBe(290)
+  })
+
+  it('open(): when two opens race, the later one wins whatever order the loads finish in', async () => {
+    await useLibrary.getState().refresh()
+    const gates = new Map<string, () => void>()
+    const realLoad = storage.load.bind(storage)
+    storage.load = async (id) => {
+      await new Promise<void>((resolve) => gates.set(id, resolve))
+      return realLoad(id)
+    }
+    const first = useLibrary.getState().open(EXAMPLE_ID)
+    const second = useLibrary.getState().open('room-forest')
+    await vi.waitFor(() => expect(gates.size).toBe(2))
+    expect(useLibrary.getState().status).toBe('loading')
+    // the second load finishes first, then the first one straggles in
+    gates.get('room-forest')!()
+    await second
+    expect(useLibrary.getState().currentId).toBe('room-forest')
+    gates.get(EXAMPLE_ID)!()
+    await first
+    expect(useLibrary.getState().currentId).toBe('room-forest')
+    expect(useStore.getState().room.name).toBe("Forest's Room")
+    expect(useLibrary.getState().status).toBe('saved')
   })
 
   it('close() flushes a pending save first', async () => {
@@ -467,6 +525,11 @@ describe('helpers', () => {
     const arrays = roomOpenings({ ...defaultRoom, windows: [defaultRoom.windows[0], defaultRoom.windows[0]], doors: [] })
     expect(arrays.windows).toHaveLength(2)
     expect(arrays.doors).toHaveLength(0)
+  })
+
+  it('defaultRoomSize is 10 × 12 ft with an 8 ft ceiling in inches, 3 × 4 × 2.6 m otherwise', () => {
+    expect(defaultRoomSize('in')).toEqual({ w: 305, d: 366, h: 244 })
+    expect(defaultRoomSize('cm')).toEqual({ w: 300, d: 400, h: 260 })
   })
 
   it('timeAgo reads naturally', () => {

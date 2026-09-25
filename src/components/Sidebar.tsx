@@ -107,9 +107,9 @@ function SelectionCard({ id }: { id: string }) {
         <button className="chip" onClick={() => rotateItem(item.id, 180)} title="Turn around">⇄ 180°</button>
       </div>
       <div className="dims-grid">
-        <label>Width ({unit})<LengthInput value={item.w} min={5} max={600} onCommit={(w) => resizeItem(item.id, { w })} /></label>
-        <label>Depth ({unit})<LengthInput value={item.d} min={5} max={600} onCommit={(d) => resizeItem(item.id, { d })} /></label>
-        <label>Height ({unit})<LengthInput value={item.h} min={1} max={400} onCommit={(h) => resizeItem(item.id, { h })} /></label>
+        <label>Width<LengthInput value={item.w} min={5} max={600} onCommit={(w) => resizeItem(item.id, { w })} /></label>
+        <label>Depth<LengthInput value={item.d} min={5} max={600} onCommit={(d) => resizeItem(item.id, { d })} /></label>
+        <label>Height<LengthInput value={item.h} min={1} max={400} onCommit={(h) => resizeItem(item.id, { h })} /></label>
       </div>
       <label className="field">
         Type
@@ -247,9 +247,9 @@ function FurniturePalette() {
                 </select>
               </label>
               <div className="dims-grid">
-                <label>Width ({unit})<LengthInput value={spec.w} min={5} max={600} onCommit={(w) => upd('w', w)} /></label>
-                <label>Depth ({unit})<LengthInput value={spec.d} min={5} max={600} onCommit={(d) => upd('d', d)} /></label>
-                <label>Height ({unit})<LengthInput value={spec.h} min={1} max={400} onCommit={(h) => upd('h', h)} /></label>
+                <label>Width<LengthInput value={spec.w} min={5} max={600} onCommit={(w) => upd('w', w)} /></label>
+                <label>Depth<LengthInput value={spec.d} min={5} max={600} onCommit={(d) => upd('d', d)} /></label>
+                <label>Height<LengthInput value={spec.h} min={1} max={400} onCommit={(h) => upd('h', h)} /></label>
               </div>
               <div className="row">
                 <button className="chip solid" type="submit">Add to the room</button>
@@ -380,9 +380,9 @@ function RoomCard() {
             <input className="text" value={room.subtitle} onChange={(e) => setRoom({ subtitle: e.target.value })} placeholder="Subtitle, e.g. New bed 140 × 200" />
           </div>
           <div className="dims-grid">
-            <label>Width ({unit})<LengthInput value={room.w} min={150} max={1200} onCommit={(w) => setRoom({ w })} /></label>
-            <label>Depth ({unit})<LengthInput value={room.d} min={150} max={1200} onCommit={(d) => setRoom({ d })} /></label>
-            <label>Height ({unit})<LengthInput value={room.h} min={200} max={400} onCommit={(h) => setRoom({ h })} /></label>
+            <label>Width<LengthInput value={room.w} min={150} max={1200} onCommit={(w) => setRoom({ w })} /></label>
+            <label>Depth<LengthInput value={room.d} min={150} max={1200} onCommit={(d) => setRoom({ d })} /></label>
+            <label>Height<LengthInput value={room.h} min={200} max={400} onCommit={(h) => setRoom({ h })} /></label>
           </div>
           <p className="muted small">Width runs left to right on the plan, depth from the back wall to the front wall.</p>
 

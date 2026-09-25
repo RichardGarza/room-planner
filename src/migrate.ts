@@ -1,5 +1,5 @@
 import { defaultRoom } from './data'
-import type { Closet, Door, Opening, Radiator, Room, RoomDoc, Wall } from './types'
+import type { Closet, Door, Item, ItemKind, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
 
 export const DOC_VERSION = 2
 
@@ -130,22 +130,129 @@ export function migrateRoom(raw: unknown): Room {
   }
 }
 
-/** Same for a whole stored document. Returns null if it is not a room document at all. */
+/* ---------- items and layouts ---------- */
+
+const KINDS: ItemKind[] = ['bed', 'chair', 'desk', 'shelf', 'dresser', 'wardrobe', 'bookcase', 'rug', 'rugRect', 'nightstand', 'sofa', 'table', 'box']
+const FALLBACK_COLOR = '#c9c2b8'
+/** Furniture sizes are kept within what the planner's own inputs allow. */
+const SIZE = { min: 5, max: 600 } as const
+const HEIGHT = { min: 1, max: 400 } as const
+/** Positions may lie outside the room (parked items sit below the plan), but not absurdly far. */
+const POS = { min: -2000, max: 5000 } as const
+
+const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const strOf = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback)
+const boolOf = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** Any finite angle is kept (normalised to 0..360); anything else is 0. */
+function rotOf(v: unknown): Rot {
+  if (!finite(v)) return 0
+  return (((v % 360) + 360) % 360) as Rot
+}
+
+/**
+ * Repair one stored item: string id and name, finite clamped sizes and position, a known kind
+ * (else "box"), a valid rotation, boolean inRoom, optional string note and a colour string.
+ * Returns null when it is not an object at all. `at` is the fallback position (the room centre).
+ */
+export function migrateItem(raw: unknown, at: { x: number; y: number }): Unkeyed<Item> | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const kind: ItemKind = KINDS.includes(o.kind as ItemKind) ? (o.kind as ItemKind) : 'box'
+  const item: Unkeyed<Item> = {
+    id: idOf(o.id),
+    name: strOf(o.name, '').trim() || (kind === 'rugRect' ? 'Rug' : kind.charAt(0).toUpperCase() + kind.slice(1)),
+    kind,
+    w: clampNum(Math.round(num(o.w, 60)), SIZE.min, SIZE.max),
+    d: clampNum(Math.round(num(o.d, 60)), SIZE.min, SIZE.max),
+    h: clampNum(Math.round(num(o.h, 60)), HEIGHT.min, HEIGHT.max),
+    x: clampNum(num(o.x, at.x), POS.min, POS.max),
+    y: clampNum(num(o.y, at.y), POS.min, POS.max),
+    rot: rotOf(o.rot),
+    color: strOf(o.color, '').trim() || FALLBACK_COLOR,
+    inRoom: boolOf(o.inRoom, true),
+  }
+  if (typeof o.note === 'string' && o.note) item.note = o.note
+  return item
+}
+
+/** Every repairable item with a unique id (a missing or duplicate id becomes "item-1", "item-2", …). */
+export function migrateItems(raw: unknown, room: Pick<Room, 'w' | 'd'>): Item[] {
+  if (!Array.isArray(raw)) return []
+  const at = { x: room.w / 2, y: room.d / 2 }
+  const fixed = raw.map((r) => migrateItem(r, at)).filter((i): i is Unkeyed<Item> => i !== null)
+  return withIds(fixed, 'item-')
+}
+
+function migratePlacement(raw: unknown): ItemPlacement | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (!finite(o.x) || !finite(o.y)) return null
+  return { x: clampNum(o.x, POS.min, POS.max), y: clampNum(o.y, POS.min, POS.max), rot: rotOf(o.rot), inRoom: boolOf(o.inRoom, true) }
+}
+
+/** Layouts that have a string id and name and a placements object; broken placements are dropped, ids deduped. */
+export function migrateLayouts(raw: unknown, room: Pick<Room, 'w' | 'd'>): Layout[] {
+  if (!Array.isArray(raw)) return []
+  const used = new Set<string>()
+  const out: Layout[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const o = entry as Record<string, unknown>
+    const id = idOf(o.id)
+    if (!id || used.has(id) || typeof o.name !== 'string') continue
+    if (!o.placements || typeof o.placements !== 'object' || Array.isArray(o.placements)) continue
+    const placements: Record<string, ItemPlacement> = {}
+    for (const [itemId, p] of Object.entries(o.placements as Record<string, unknown>)) {
+      const fixed = migratePlacement(p)
+      if (fixed) placements[itemId] = fixed
+    }
+    used.add(id)
+    const layout: Layout = { id, name: o.name, description: strOf(o.description, ''), placements }
+    if (o.recommended === true) layout.recommended = true
+    if (Array.isArray(o.items)) layout.items = migrateItems(o.items, room)
+    out.push(layout)
+  }
+  return out
+}
+
+const DEFAULT_SETTINGS: RoomDoc['settings'] = { daytime: true, doorAngle: 70, blinds: 40, bedding: true, walkHeight: 'adult', quality: 'best' }
+
+function migrateSettings(raw: unknown): RoomDoc['settings'] {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    daytime: boolOf(o.daytime, DEFAULT_SETTINGS.daytime),
+    doorAngle: clampNum(num(o.doorAngle, DEFAULT_SETTINGS.doorAngle), 0, 90),
+    blinds: clampNum(num(o.blinds, DEFAULT_SETTINGS.blinds), 0, 100),
+    bedding: boolOf(o.bedding, DEFAULT_SETTINGS.bedding),
+    walkHeight: o.walkHeight === 'child' ? 'child' : 'adult',
+    quality: o.quality === 'fast' ? 'fast' : 'best',
+  }
+}
+
+/**
+ * Same for a whole stored document. Returns null if it is not a room document at all.
+ * Items and layouts are validated too, so an imported or shared file can never leave the
+ * planner with an item that has no name or a NaN position.
+ */
 export function migrateDoc(raw: unknown): RoomDoc | null {
   if (!raw || typeof raw !== 'object') return null
-  const d = raw as Partial<RoomDoc>
-  if (!d.room || !Array.isArray(d.items)) return null
+  const d = raw as Record<string, unknown>
+  if (!d.room || typeof d.room !== 'object' || !Array.isArray(d.items)) return null
+  const room = migrateRoom(d.room)
+  const ts = new Date().toISOString()
   return {
-    id: d.id ?? `room-${Math.random().toString(36).slice(2, 10)}`,
-    name: d.name ?? 'Untitled room',
-    group: d.group ?? '',
-    notes: d.notes ?? '',
-    createdAt: d.createdAt ?? new Date().toISOString(),
-    updatedAt: d.updatedAt ?? new Date().toISOString(),
-    room: migrateRoom(d.room),
-    items: d.items,
-    layouts: d.layouts ?? [],
-    settings: { daytime: true, doorAngle: 70, blinds: 40, bedding: true, walkHeight: 'adult', quality: 'best', ...(d.settings ?? {}) },
+    id: idOf(d.id) ?? `room-${Math.random().toString(36).slice(2, 10)}`,
+    name: strOf(d.name, '').trim() || 'Untitled room',
+    group: strOf(d.group, ''),
+    notes: strOf(d.notes, ''),
+    createdAt: strOf(d.createdAt, ts),
+    updatedAt: strOf(d.updatedAt, ts),
+    room,
+    items: migrateItems(d.items, room),
+    layouts: migrateLayouts(d.layouts, room),
+    settings: migrateSettings(d.settings),
     version: DOC_VERSION,
   }
 }

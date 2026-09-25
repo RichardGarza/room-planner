@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FloorPlan } from './components/FloorPlan'
 import { Library } from './components/Library'
 import { PrintDialog, usePrintDialog } from './components/PrintDialog'
@@ -83,18 +83,20 @@ function Planner() {
   const plan = (
     <>
       <div className="pane-head">
-        <div>
+        <div className="pane-head-row">
           <h4>Floor plan</h4>
-          <span className="legend">drag items · R rotates · drop below the room to remove</span>
-        </div>
-        <div className="pane-tools">
-          <button className="print-btn" title="Print the plan or save it as a PDF (⌘P)" onClick={() => openPrint(true)}>⎙ Print / PDF</button>
-          <div className="focus-seg" role="group" aria-label="Focus">
-            <span className="focus-label">Focus</span>
-            <button className={focus === '2d' ? 'on' : ''} aria-label="Focus 2D" aria-pressed={focus === '2d'} title="Bigger floor plan (F)" onClick={() => setFocus('2d')}>2D</button>
-            <button className={focus === '3d' ? 'on' : ''} aria-label="Focus 3D" aria-pressed={focus === '3d'} title="Bigger 3D view (F)" onClick={() => setFocus('3d')}>3D</button>
+          <div className="pane-tools">
+            <button className="print-btn" title="Print the plan or save it as a PDF (⌘P)" aria-label="Print / PDF" onClick={() => openPrint(true)}>
+              <span aria-hidden="true">⎙</span> Print<span className="print-more"> / PDF</span>
+            </button>
+            <div className="focus-seg" role="group" aria-label="Focus">
+              <span className="focus-label">Focus</span>
+              <button className={focus === '2d' ? 'on' : ''} aria-label="Focus 2D" aria-pressed={focus === '2d'} title="Bigger floor plan (F)" onClick={() => setFocus('2d')}>2D</button>
+              <button className={focus === '3d' ? 'on' : ''} aria-label="Focus 3D" aria-pressed={focus === '3d'} title="Bigger 3D view (F)" onClick={() => setFocus('3d')}>3D</button>
+            </div>
           </div>
         </div>
+        <span className="legend" title="Drag items · R rotates · drop below the room to remove">drag items · R rotates · drop below the room to remove</span>
       </div>
       <FloorPlan />
       {selected && (
@@ -132,8 +134,8 @@ function Planner() {
         <button className={daytime ? 'on' : ''} onClick={() => setSetting('daytime', true)}>☀ Day</button>
         <button className={!daytime ? 'on' : ''} onClick={() => setSetting('daytime', false)}>☾ Evening</button>
       </div>
-      {view === 'walk' && <div className="walk-hint">Drag to look around · W A S D or arrows to move</div>}
-      {view === 'outside' && !selectedId && <div className="walk-hint">Drag to orbit · scroll to zoom · click furniture to select, drag to move</div>}
+      {view === 'walk' && <SceneHint kind="walk">Drag to look around · W A S D or arrows to move</SceneHint>}
+      {view === 'outside' && !selectedId && <SceneHint kind="orbit">Drag to orbit · scroll to zoom · click furniture to select, drag to move</SceneHint>}
       <Scene3D />
     </>
   )
@@ -146,6 +148,61 @@ function Planner() {
         <Sidebar />
       </main>
       <PrintDialog />
+    </div>
+  )
+}
+
+/* ---------- one-time hints over the 3D view ---------- */
+
+/** localStorage flag per hint: set after the first interaction, so the pill never comes back. */
+const HINT_KEYS = { orbit: 'room-planner.hint.orbit', walk: 'room-planner.hint.walk' } as const
+const WALK_KEYS = new Set(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'])
+const HINT_FADE_MS = 450
+
+function hintSeen(key: string) {
+  try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+
+/**
+ * The "Drag to orbit…" / "Drag to look around…" pill: shown until the first pointer interaction
+ * on the canvas (or, for walking, the first movement key), then faded out and remembered.
+ */
+function SceneHint({ kind, children }: { kind: keyof typeof HINT_KEYS; children: React.ReactNode }) {
+  const key = HINT_KEYS[kind]
+  const [seen, setSeen] = useState(() => hintSeen(key))
+  const [fading, setFading] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (seen || fading) return
+    const el = ref.current
+    if (!el) return
+    // the canvas sits beside the pill inside the scene pane
+    const target: HTMLElement = el.parentElement?.querySelector('canvas') ?? el.parentElement ?? el
+    const done = () => {
+      try { localStorage.setItem(key, '1') } catch { /* private mode: the hint just comes back next time */ }
+      setFading(true)
+    }
+    const onKey = (e: KeyboardEvent) => { if (kind === 'walk' && WALK_KEYS.has(e.key.toLowerCase())) done() }
+    target.addEventListener('pointerdown', done)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      target.removeEventListener('pointerdown', done)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [seen, fading, key, kind])
+
+  // once faded out, take the pill out of the page
+  useEffect(() => {
+    if (!fading) return
+    const timer = setTimeout(() => setSeen(true), HINT_FADE_MS)
+    return () => clearTimeout(timer)
+  }, [fading])
+
+  if (seen) return null
+  return (
+    <div ref={ref} className="walk-hint" style={{ opacity: fading ? 0 : 1, transition: `opacity ${HINT_FADE_MS}ms ease` }} aria-hidden={fading}>
+      {children}
     </div>
   )
 }

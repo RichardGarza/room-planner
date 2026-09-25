@@ -8,6 +8,7 @@ import { forestsRoom } from './seeds'
 import { getStorage, summarize, type RoomStorage } from './storage'
 import { park, useStore } from './store'
 import type { CatalogEntry, Door, Item, Opening, Room, RoomDoc, RoomSummary } from './types'
+import type { Unit } from './units'
 
 /*
  * The room library: a list of saved room documents (one per real room or
@@ -88,6 +89,11 @@ export const AUTOSAVE_MS = 700
 /* ---------- helpers ---------- */
 
 export const newId = () => `room-${Math.random().toString(36).slice(2, 10)}`
+
+/** What the new-room form starts with: 10 × 12 ft, 8 ft ceiling in inches, else 300 × 400 × 260 cm. */
+export function defaultRoomSize(unit: Unit): { w: number; d: number; h: number } {
+  return unit === 'in' ? { w: 305, d: 366, h: 244 } : { w: 300, d: 400, h: 260 }
+}
 const now = () => new Date().toISOString()
 
 let storageOverride: RoomStorage | null = null
@@ -300,9 +306,13 @@ let unsubscribe: (() => void) | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
 /** bumps on every change; a save only reports "saved" if nothing changed meanwhile */
 let changeSeq = 0
+/** true from the first edit until a save of everything so far succeeds (a failed autosave keeps it set) */
+let unsaved = false
 let inFlight: Promise<void> | null = null
 /** start() runs once even if React mounts the app twice (StrictMode) */
 let started: Promise<void> | null = null
+/** bumps on every open/create/close; an open whose token went stale while loading is dropped */
+let openSeq = 0
 
 function clearTimer() {
   if (timer) clearTimeout(timer)
@@ -342,7 +352,10 @@ export const useLibrary = create<LibraryState>((set, get) => {
         if (current && current.id === doc.id) {
           current = { ...current, updatedAt: doc.updatedAt }
           upsertSummary(doc)
-          if (changeSeq === seq) set({ status: 'saved', error: null })
+          if (changeSeq === seq) {
+            unsaved = false
+            set({ status: 'saved', error: null })
+          }
         }
       } catch (e) {
         set({ status: 'error', error: `Could not save: ${errorText(e)}` })
@@ -355,9 +368,34 @@ export const useLibrary = create<LibraryState>((set, get) => {
 
   const markDirty = () => {
     changeSeq += 1
+    unsaved = true
     set({ status: 'dirty' })
     clearTimer()
     timer = setTimeout(() => { void flush() }, AUTOSAVE_MS)
+  }
+
+  /**
+   * Save whatever is pending and leave the open room. Returns false, with the room still open
+   * and the error shown, when the pending edits could not be saved: nothing is ever discarded.
+   */
+  const closeCurrent = async (): Promise<boolean> => {
+    if (!current) return true
+    const st = get().status
+    if (timer || unsaved || st === 'dirty' || st === 'saving') await flush()
+    else if (inFlight) await inFlight
+    if (unsaved && current) {
+      // the retry failed too: keep the room open so the edits stay in the planner
+      const why = get().error ?? 'Could not save'
+      set({ status: 'error', error: `${why} — the room stays open so nothing is lost. Try again in a moment.` })
+      return false
+    }
+    unsubscribe?.()
+    unsubscribe = null
+    clearTimer()
+    current = null
+    openSeq += 1
+    set({ currentId: null, status: 'idle', error: null })
+    return true
   }
 
   const watchPlanner = () => {
@@ -385,6 +423,8 @@ export const useLibrary = create<LibraryState>((set, get) => {
     clearTimer()
     const { room: _room, items: _items, layouts: _layouts, settings: _settings, ...meta } = doc
     current = meta
+    unsaved = false
+    openSeq += 1
     useStore.getState().hydrate(doc)
     watchPlanner()
     set({ currentId: doc.id, status: 'saved', error: null })
@@ -461,7 +501,7 @@ export const useLibrary = create<LibraryState>((set, get) => {
       const group = input.group?.trim() ?? ''
       const start: StartWith = input.start ?? (input.fromExample ? 'example' : 'basics')
       const doc = start === 'example' ? exampleDoc(name, group) : freshDoc({ ...input, name, group }, start)
-      await get().close()
+      if (!(await closeCurrent())) return doc.id
       try {
         const s = await storage()
         await s.save(doc)
@@ -475,10 +515,13 @@ export const useLibrary = create<LibraryState>((set, get) => {
 
     open: async (id) => {
       if (get().currentId === id) return
-      await get().close()
+      if (!(await closeCurrent())) return
+      // two quick opens: only the latest one may land, whatever order the loads finish in
+      const seq = ++openSeq
       set({ status: 'loading', error: null })
       try {
         const doc = await loadDoc(id)
+        if (seq !== openSeq) return
         if (!doc) {
           set({ status: 'error', error: 'That room could not be found.' })
           await get().refresh()
@@ -486,20 +529,14 @@ export const useLibrary = create<LibraryState>((set, get) => {
         }
         openDoc(doc)
       } catch (e) {
+        if (seq !== openSeq) return
         set({ status: 'error', error: `Could not open the room: ${errorText(e)}` })
       }
     },
 
     close: async () => {
       if (!current) return
-      const st = get().status
-      if (timer || st === 'dirty' || st === 'saving') await flush()
-      else if (inFlight) await inFlight
-      unsubscribe?.()
-      unsubscribe = null
-      clearTimer()
-      current = null
-      set({ currentId: null, status: 'idle', error: null })
+      if (!(await closeCurrent())) return
       await get().refresh()
     },
 
@@ -586,6 +623,8 @@ export const useLibrary = create<LibraryState>((set, get) => {
         clearTimer()
         if (inFlight) await inFlight
         current = null
+        unsaved = false
+        openSeq += 1
         set({ currentId: null, status: 'idle' })
       }
       try {
@@ -630,7 +669,7 @@ export const useLibrary = create<LibraryState>((set, get) => {
         // keep the id unless it collides with a room already in the library
         const taken = get().rooms.some((r) => r.id === doc.id) || (current && current.id === doc.id)
         const imported: RoomDoc = { ...doc, id: taken ? newId() : doc.id, updatedAt: now() }
-        await get().close()
+        if (!(await closeCurrent())) return null
         await s.save(imported)
         upsertSummary(imported)
         openDoc(imported)
