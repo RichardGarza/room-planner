@@ -38,12 +38,12 @@ export const defaultItems: Item[] = [
     x: 188, y: 130, rot: 0, color: '#f3c9d8', inRoom: true,
     note: 'IKEA TUFJORD, mattress 140×200; outer size 164×223 cm, headboard 109 cm.',
   },
-  { id: 'shelf', name: 'Shelf', kind: 'shelf', w: 49, d: 40, h: 110, x: 35, y: 30, rot: 0, color: '#f7f4ef', inRoom: true },
+  { id: 'shelf', name: 'Shelf', kind: 'shelf', w: 49, d: 40, h: 110, x: 20, y: 35, rot: 270, color: '#f7f4ef', inRoom: true },
   { id: 'desk', name: 'Desk', kind: 'desk', w: 73, d: 50, h: 75, x: 25, y: 105, rot: 270, color: '#f7f4ef', inRoom: true },
   { id: 'chair', name: 'Kids chair', kind: 'chair', w: 56, d: 56, h: 86, x: 68, y: 105, rot: 0, color: '#f2a7c3', inRoom: true },
   { id: 'dresser', name: 'Dresser', kind: 'dresser', w: 160, d: 48, h: 85, x: 24, y: 224, rot: 270, color: '#f7f4ef', inRoom: true },
   { id: 'rug', name: 'Rug', kind: 'rug', w: 120, d: 120, h: 1, x: 120, y: 240, rot: 0, color: '#5f6f86', inRoom: true },
-  { id: 'bookcase', name: 'Bookcase', kind: 'bookcase', w: 60, d: 30, h: 120, x: 32, y: 335, rot: 180, color: '#f7f4ef', inRoom: true },
+  { id: 'bookcase', name: 'Bookcase', kind: 'bookcase', w: 60, d: 30, h: 120, x: 15, y: 340, rot: 270, color: '#f7f4ef', inRoom: true },
   { id: 'wardrobe', name: 'Wardrobe', kind: 'wardrobe', w: 100, d: 58, h: 200, x: 218, y: 335, rot: 180, color: '#efe9df', inRoom: true },
 ]
 
@@ -66,10 +66,10 @@ export const presetLayouts: Layout[] = [
     placements: {
       ...base,
       bed: { x: 82, y: 185, rot: 0, inRoom: true },
-      shelf: { x: 235, y: 30, rot: 0, inRoom: true },
+      shelf: { x: 250, y: 30, rot: 90, inRoom: true },
       desk: { x: 245, y: 95, rot: 90, inRoom: true },
       chair: { x: 200, y: 95, rot: 0, inRoom: true },
-      dresser: { x: 246, y: 232, rot: 90, inRoom: true },
+      dresser: { x: 246, y: 224, rot: 90, inRoom: true },
       rug: { x: 190, y: 250, rot: 0, inRoom: true },
       bookcase: { x: 32, y: 345, rot: 180, inRoom: true },
     },

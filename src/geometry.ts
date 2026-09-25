@@ -361,7 +361,7 @@ export const accessRules: Record<ItemKind, AccessRule | null> = {
   wardrobe: { depth: 65, faces: 'front', mode: 'all', reason: 'doors' },
   bookcase: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
   shelf: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
-  desk: { depth: 75, faces: 'front', mode: 'all', reason: 'chair' },
+  desk: { depth: 55, faces: 'front', mode: 'all', reason: 'chair' },
   sofa: { depth: 60, faces: 'front', mode: 'all', reason: 'legroom' },
   /** dining tables (w ≥ 120) need 60 cm on every side; smaller tables 45 cm on at least one side */
   table: { depth: 60, faces: 'all', mode: 'all', reason: 'seats' },
