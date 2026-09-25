@@ -74,7 +74,7 @@ export function runChecks(room: Room, items: Item[]): Check[] {
   // 5. Door swing
   const { maxAngle, blocker } = doorClearance(room, items)
   if (blocker && maxAngle < MIN_DOOR_ANGLE) {
-    checks.push({ level: maxAngle < 45 ? 'bad' : 'warn', text: `Door only opens to ${maxAngle}° — ${blocker.name.toLowerCase()} is in the way`, itemIds: [blocker.id] })
+    checks.push({ level: maxAngle < 45 ? 'bad' : 'warn', text: `Door only opens to ${maxAngle}° — ${blocker.name} is in the way`, itemIds: [blocker.id] })
   } else {
     checks.push({ level: 'ok', text: 'Wide, clear entry into the room', itemIds: [] })
   }

@@ -10,6 +10,8 @@ Inspired by [this post](https://x.com/scheemunai/status/2103059885361598633) whe
 - **3D view** in the middle. Orbit from outside (near walls are cut away), or walk through the room with the mouse and `WASD`. Day and evening lighting. You can also click and drag furniture directly in 3D.
 - **Layouts**: preset options A, B, C and "now", plus your own saved versions (kept in the browser).
 - **Checks**: overlaps, furniture through walls, window and radiator coverage, whether the door can still open, passage widths next to the bed, and whether you can still get out of bed.
+- **Room editor**: change the room size, move the window, door (with hinge side) and radiator to any wall, and pick wall and floor colours. Everything re-renders in 2D and 3D.
+- **Add furniture**: add anything by name, type and size; rename, recolour, resize or delete any item from the selection panel.
 - **Display settings**: door opening angle, blind height, bedding on or off, eye height, render quality.
 - **Share**: the Share button copies a link that encodes the whole layout in the URL hash.
 
@@ -22,9 +24,9 @@ npm run dev
 
 Then open the printed local URL. `npm run build` produces a static site in `dist/`.
 
-## Change the room
+## Change the defaults
 
-Everything about the room and furniture lives in `src/data.ts`: room size, window, door (with hinge side), radiator, wall colours, and the furniture catalogue with sizes in centimetres. The preset layouts are in the same file as position overrides per item.
+The UI can edit everything, but the starting room and furniture live in `src/data.ts`: room size, window, door (with hinge side), radiator, wall colours, and the furniture catalogue with sizes in centimetres. The preset layouts are in the same file as position overrides per item.
 
 ## Stack
 
