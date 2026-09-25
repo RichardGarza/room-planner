@@ -4,8 +4,9 @@ import { defaultItems, defaultRoom, makeEmptyRoom, presetLayouts } from './data'
 import { doorClearance, doorwayRect, intersects, isRugKind, rectOf } from './geometry'
 import { migrateDoc } from './migrate'
 import { findFreeSpot, type PlacementOptions, type Spot } from './placement'
+import { forestsRoom } from './seeds'
 import { getStorage, summarize, type RoomStorage } from './storage'
-import { useStore } from './store'
+import { park, useStore } from './store'
 import type { CatalogEntry, Door, Item, Opening, Room, RoomDoc, RoomSummary } from './types'
 
 /*
@@ -31,6 +32,16 @@ export interface CreateInput {
   start?: StartWith
   /** older alias for start: 'example' */
   fromExample?: boolean
+}
+
+export type CopyMode = 'copy' | 'move'
+
+export interface CopyResult {
+  /** true when it landed on a free spot in the target room; false when it is parked beside that plan */
+  placed: boolean
+  targetName: string
+  /** where it landed when placed, e.g. "against the left wall" */
+  where?: string
 }
 
 interface LibraryState {
@@ -59,9 +70,19 @@ interface LibraryState {
   exportDoc: (id: string) => Promise<void>
   importDoc: () => Promise<string | null>
   saveNow: () => Promise<void>
+  /**
+   * Copy (or move) one of the open room's items into another saved room, on a free spot there
+   * or parked beside its plan when nothing fits. Rejects with a readable message.
+   */
+  copyItemToRoom: (itemId: string, targetId: string, mode: CopyMode) => Promise<CopyResult>
 }
 
+/** The one flag older versions set after seeding the example room; see seedKey. */
 export const SEEDED_KEY = 'room-planner.seeded'
+/** The example room's id in the library (copies made with start: 'example' get fresh ids). */
+export const EXAMPLE_ID = 'room-example'
+/** Per-document flag: this seed was added once. It stays after the room is deleted. */
+export const seedKey = (id: string) => `${SEEDED_KEY}.${id}`
 export const AUTOSAVE_MS = 700
 
 /* ---------- helpers ---------- */
@@ -105,6 +126,32 @@ export function exampleDoc(name = defaultRoom.name, group = 'Examples'): RoomDoc
   })!
 }
 
+/* ---------- seeds ---------- */
+
+/**
+ * Rooms every library starts with: the example room and Forest's nursery. On every refresh a seed
+ * whose id is missing and whose flag is unset is saved and flagged, so each appears once per browser
+ * and deleting it never brings it back. The flags live in localStorage even in the Mac app.
+ */
+const seedBuilders: (() => RoomDoc)[] = [() => ({ ...exampleDoc(), id: EXAMPLE_ID }), forestsRoom]
+
+/** Add the seeds that are missing and not yet flagged; true when something was saved. */
+async function seedMissing(s: RoomStorage, list: RoomSummary[]): Promise<boolean> {
+  // before per-document flags there was a single flag, set once the example had been seeded
+  if (flagGet(SEEDED_KEY) && !flagGet(seedKey(EXAMPLE_ID))) flagSet(seedKey(EXAMPLE_ID), '1')
+  let added = false
+  for (const build of seedBuilders) {
+    const doc = build()
+    if (flagGet(seedKey(doc.id))) continue
+    if (!list.some((r) => r.id === doc.id)) {
+      await s.save(doc)
+      added = true
+    }
+    flagSet(seedKey(doc.id), '1')
+  }
+  return added
+}
+
 /* ---------- starter furniture ---------- */
 
 /** Catalogue presets by id, in the given order, skipping any id that does not exist. */
@@ -118,12 +165,18 @@ function itemFrom(p: CatalogEntry, key: string, spot: Spot): Item {
   return p.note ? { ...item, note: p.note } : item
 }
 
-/** True when the piece lies inside the room, clear of the door and of every solid item already placed. */
-function fitsAt(room: Room, items: Item[], item: Item): boolean {
+/** True when the piece lies inside the room and clear of every solid item already placed (rugs go under things). */
+function clearOfFurniture(room: Room, items: Item[], item: Item): boolean {
   const r = rectOf(item)
   if (r.x0 < -0.01 || r.y0 < -0.01 || r.x1 > room.w + 0.01 || r.y1 > room.d + 0.01) return false
-  if (items.some((o) => o.inRoom && !isRugKind(o.kind) && intersects(r, rectOf(o)))) return false
+  return !items.some((o) => o.inRoom && !isRugKind(o.kind) && intersects(r, rectOf(o)))
+}
+
+/** True when the piece lies inside the room, clear of the door and of every solid item already placed. */
+function fitsAt(room: Room, items: Item[], item: Item): boolean {
+  if (!clearOfFurniture(room, items, item)) return false
   if (isRugKind(item.kind)) return true
+  const r = rectOf(item)
   return doorClearance(room, [item]).maxAngle === 90 && !room.doors.some((door) => intersects(r, doorwayRect(room, door)))
 }
 
@@ -154,6 +207,34 @@ export function starterItems(room: Room): Item[] {
   place('desk', presets(['desk-small', 'desk-kids']))
   place('rug', presets([room.w < 250 ? 'rug-round-120' : 'rug-round-160']), { prefer: 'centre' })
   return items
+}
+
+/* ---------- copying an item to another room ---------- */
+
+/** A fresh copy of an item for another room, dropped on a free spot there (findFreeSpot's centre fallback when there is none). */
+function cloneInto(target: RoomDoc, item: Item): Item {
+  const taken = new Set(target.items.map((i) => i.id))
+  let id = ''
+  do id = `${item.kind}-${Math.random().toString(36).slice(2, 8)}`
+  while (taken.has(id))
+  const spot = findFreeSpot(target.room, target.items, item.w, item.d, { h: item.h })
+  const clone: Item = {
+    id, name: item.name, kind: item.kind, w: item.w, d: item.d, h: item.h,
+    x: spot.x, y: spot.y, rot: spot.rot, color: item.color, inRoom: true,
+  }
+  return item.note ? { ...clone, note: item.note } : clone
+}
+
+/** Where a placed item sits, for the "Copied to…" message: "against the left wall", "in the back-right corner", … */
+function describeSpot(room: Room, item: Item): string {
+  const r = rectOf(item)
+  const near = 1
+  const x = r.x0 <= near ? 'left' : r.x1 >= room.w - near ? 'right' : ''
+  const y = r.y0 <= near ? 'back' : r.y1 >= room.d - near ? 'front' : ''
+  if (x && y) return `in the ${y}-${x} corner`
+  if (x) return `against the ${x} wall`
+  if (y) return `against the ${y} wall`
+  return 'in the middle of the room'
 }
 
 /** A new room of the given size: the shell, plus the starter furniture unless it should stay empty. */
@@ -367,11 +448,7 @@ export const useLibrary = create<LibraryState>((set, get) => {
       try {
         const s = await storage()
         let list = await s.list()
-        if (list.length === 0 && !flagGet(SEEDED_KEY)) {
-          flagSet(SEEDED_KEY, '1')
-          await s.save(exampleDoc())
-          list = await s.list()
-        }
+        if (await seedMissing(s, list)) list = await s.list()
         setRooms(list)
         set({ location: s.location, error: null, ...(get().currentId ? {} : { status: 'idle' as const }) })
       } catch (e) {
@@ -567,6 +644,36 @@ export const useLibrary = create<LibraryState>((set, get) => {
     saveNow: async () => {
       if (!current) return
       await flush()
+    },
+
+    copyItemToRoom: async (itemId, targetId, mode) => {
+      const source = useStore.getState()
+      const item = source.items.find((i) => i.id === itemId)
+      if (!item) throw new Error('That item is no longer in this room.')
+      // the open room is edited in the planner, never through storage; the UI does not offer it
+      if (targetId === get().currentId) return { placed: false, targetName: current?.name ?? source.room.name }
+      let target: RoomDoc | null
+      try {
+        target = await loadDoc(targetId)
+      } catch (e) {
+        throw new Error(`Could not open that room: ${errorText(e)}`)
+      }
+      if (!target) throw new Error('That room could not be found.')
+      const clone = cloneInto(target, item)
+      const placed = clearOfFurniture(target.room, target.items, clone)
+      const items = placed ? [...target.items, clone] : park(target.room, [...target.items, { ...clone, inRoom: false }])
+      const next: RoomDoc = { ...target, items, updatedAt: now() }
+      try {
+        const s = await storage()
+        await s.save(next)
+      } catch (e) {
+        throw new Error(`Could not save ${target.name}: ${errorText(e)}`)
+      }
+      upsertSummary(next)
+      if (mode === 'move') useStore.getState().removeItem(itemId)
+      return placed
+        ? { placed, targetName: target.name, where: describeSpot(target.room, clone) }
+        : { placed, targetName: target.name }
     },
   }
 })

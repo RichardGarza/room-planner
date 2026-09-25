@@ -12,8 +12,10 @@ class MemoryStorage {
 }
 ;(globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage()
 
-import { AUTOSAVE_MS, SEEDED_KEY, roomOpenings, timeAgo, useLibrary } from '../library'
-import { useStore } from '../store'
+import { AUTOSAVE_MS, EXAMPLE_ID, SEEDED_KEY, roomOpenings, seedKey, timeAgo, useLibrary, type CreateInput } from '../library'
+import { PARK_Y, useStore } from '../store'
+import { forestsRoom } from '../seeds'
+import { findFreeSpot } from '../placement'
 import { summarize, type RoomStorage } from '../storage/types'
 import { DOC_VERSION } from '../migrate'
 import { defaultRoom, presetLayouts } from '../data'
@@ -51,23 +53,59 @@ afterEach(async () => {
 })
 
 describe('library', () => {
-  it('seeds the example room once', async () => {
+  it("seeds the example room and Forest's Room once each", async () => {
     await useLibrary.getState().refresh()
-    let rooms = useLibrary.getState().rooms
-    expect(rooms).toHaveLength(1)
-    expect(rooms[0].name).toBe("Mila's room")
+    const rooms = useLibrary.getState().rooms
+    expect(rooms.map((r) => r.id)).toEqual([EXAMPLE_ID, 'room-forest'])
+    expect(rooms.map((r) => r.name)).toEqual(["Mila's room", "Forest's Room"])
     expect(rooms[0].group).toBe('Examples')
     expect(rooms[0].itemCount).toBe(8)
-    expect(useLibrary.getState().groups).toEqual(['Examples'])
+    expect(rooms[1].group).toBe('Home')
+    expect(rooms[1].itemCount).toBe(7)
+    expect(storage.docs.get('room-forest')).toEqual(forestsRoom())
+    expect(useLibrary.getState().groups).toEqual(['Examples', 'Home'])
     expect(useLibrary.getState().location).toBe('a test')
-    expect(localStorage.getItem(SEEDED_KEY)).toBe('1')
+    expect(localStorage.getItem(seedKey(EXAMPLE_ID))).toBe('1')
+    expect(localStorage.getItem(seedKey('room-forest'))).toBe('1')
+    expect(localStorage.getItem(SEEDED_KEY)).toBeNull()
 
-    // deleting it and refreshing does not bring it back
-    await useLibrary.getState().remove(rooms[0].id)
+    // refreshing again saves nothing more
+    const saves = storage.saves
     await useLibrary.getState().refresh()
-    rooms = useLibrary.getState().rooms
-    expect(rooms).toHaveLength(0)
+    expect(storage.saves).toBe(saves)
+    expect(useLibrary.getState().rooms).toHaveLength(2)
+  })
+
+  it('never brings a deleted seed back', async () => {
+    await useLibrary.getState().refresh()
+    await useLibrary.getState().remove('room-forest')
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms.map((r) => r.id)).toEqual([EXAMPLE_ID])
+    await useLibrary.getState().remove(EXAMPLE_ID)
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms).toHaveLength(0)
     expect(storage.docs.size).toBe(0)
+    expect(localStorage.getItem(seedKey(EXAMPLE_ID))).toBe('1')
+    expect(localStorage.getItem(seedKey('room-forest'))).toBe('1')
+  })
+
+  it('treats the old single flag as "the example was seeded already"', async () => {
+    localStorage.setItem(SEEDED_KEY, '1')
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms.map((r) => r.id)).toEqual(['room-forest'])
+    expect(localStorage.getItem(seedKey(EXAMPLE_ID))).toBe('1')
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms).toHaveLength(1)
+  })
+
+  it('marks a seed as done when a room with its id is already in the library', async () => {
+    storage.docs.set('room-forest', { ...forestsRoom(), name: 'My nursery' })
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms.map((r) => r.name)).toEqual(['My nursery', "Mila's room"])
+    expect(localStorage.getItem(seedKey('room-forest'))).toBe('1')
+    await useLibrary.getState().remove('room-forest')
+    await useLibrary.getState().refresh()
+    expect(useLibrary.getState().rooms.map((r) => r.id)).toEqual([EXAMPLE_ID])
   })
 
   it('create() adds a room and opens it in the planner', async () => {
@@ -76,7 +114,7 @@ describe('library', () => {
     const lib = useLibrary.getState()
     expect(lib.currentId).toBe(id)
     expect(lib.status).toBe('saved')
-    expect(lib.rooms.map((r) => r.name).sort()).toEqual(["Mila's room", 'Study'])
+    expect(lib.rooms.map((r) => r.name).sort()).toEqual(["Forest's Room", "Mila's room", 'Study'])
     expect(lib.groups).toEqual(['Examples', 'Home'])
     const st = useStore.getState()
     expect(st.room.name).toBe('Study')
@@ -166,7 +204,7 @@ describe('library', () => {
     await useLibrary.getState().refresh()
     const id = useLibrary.getState().rooms[0].id
     await useLibrary.getState().setGroup(id, 'Cabin')
-    expect(useLibrary.getState().groups).toEqual(['Cabin'])
+    expect(useLibrary.getState().groups).toEqual(['Cabin', 'Home'])
     expect(storage.docs.get(id)!.group).toBe('Cabin')
   })
 
@@ -176,7 +214,7 @@ describe('library', () => {
     const copyId = await useLibrary.getState().duplicate(id)
     expect(copyId).toBeTruthy()
     expect(copyId).not.toBe(id)
-    expect(useLibrary.getState().rooms).toHaveLength(2)
+    expect(useLibrary.getState().rooms).toHaveLength(3)
     const copy = storage.docs.get(copyId!)!
     expect(copy.name).toBe("Mila's room (copy)")
     expect(copy.items).toHaveLength(8)
@@ -227,7 +265,7 @@ describe('library', () => {
     expect(st.items).toHaveLength(1)
     expect(st.savedLayouts).toEqual([])
     expect(storage.docs.get('room-old')!.version).toBe(DOC_VERSION)
-    expect(useLibrary.getState().rooms.map((r) => r.name).sort()).toEqual(["Mila's room", 'Old room'])
+    expect(useLibrary.getState().rooms.map((r) => r.name).sort()).toEqual(["Forest's Room", "Mila's room", 'Old room'])
 
     // an unreadable file is reported, not thrown
     storage.nextImport = { nothing: true }
@@ -314,6 +352,113 @@ describe('what a new room starts with', () => {
   })
 })
 
+describe('copying an item to another room', () => {
+  const inside = (room: Room, it: Item) => {
+    const r = rectOf(it)
+    return r.x0 >= 0 && r.y0 >= 0 && r.x1 <= room.w && r.y1 <= room.d
+  }
+
+  /** Seed the library, save a target room, then open the example room in the planner. */
+  async function setup(target: CreateInput = { name: 'Studio', group: 'Home', w: 300, d: 400, start: 'empty' }) {
+    await useLibrary.getState().refresh()
+    const targetId = await useLibrary.getState().create(target)
+    await useLibrary.getState().open(EXAMPLE_ID)
+    expect(useLibrary.getState().currentId).toBe(EXAMPLE_ID)
+    return targetId
+  }
+
+  it('copies with a fresh id onto a free spot in the target and leaves the source alone', async () => {
+    const targetId = await setup()
+    storage.docs.get(targetId)!.updatedAt = '2020-01-01T00:00:00.000Z'
+    const wardrobe = useStore.getState().items.find((i) => i.id === 'wardrobe')!
+    const saves = storage.saves
+
+    const result = await useLibrary.getState().copyItemToRoom('wardrobe', targetId, 'copy')
+    expect(result.placed).toBe(true)
+    expect(result.targetName).toBe('Studio')
+    expect(result.where).toMatch(/^(against the (left|right|back|front) wall|in the (back|front)-(left|right) corner)$/)
+
+    const target = storage.docs.get(targetId)!
+    expect(target.items).toHaveLength(1)
+    const copy = target.items[0]
+    expect(copy.id).toMatch(/^wardrobe-[a-z0-9]{6}$/)
+    expect(copy).toMatchObject({ name: 'Wardrobe', kind: 'wardrobe', w: 100, d: 58, h: 200, color: wardrobe.color, inRoom: true })
+    expect('note' in copy).toBe(false)
+    expect(inside(target.room, copy)).toBe(true)
+    const spot = findFreeSpot(target.room, [], 100, 58, { h: 200 })
+    expect({ x: copy.x, y: copy.y, rot: copy.rot }).toEqual(spot)
+    expect(target.updatedAt > '2020-01-01T00:00:00.000Z').toBe(true)
+    expect(storage.saves).toBe(saves + 1)
+
+    // the source still has it and is untouched; the list shows the target's new item
+    expect(useStore.getState().items.find((i) => i.id === 'wardrobe')).toBe(wardrobe)
+    expect(useLibrary.getState().status).toBe('saved')
+    expect(useLibrary.getState().rooms.find((r) => r.id === targetId)!.itemCount).toBe(1)
+    expect(useLibrary.getState().currentId).toBe(EXAMPLE_ID)
+
+    // a second copy gets another id and another free spot, and the note comes along
+    const again = await useLibrary.getState().copyItemToRoom('bed', targetId, 'copy')
+    expect(again.placed).toBe(true)
+    const items = storage.docs.get(targetId)!.items
+    expect(items).toHaveLength(2)
+    expect(items[1].id).toMatch(/^bed-/)
+    expect(items[1].note).toMatch(/TUFJORD/)
+    expect(intersects(rectOf(items[0]), rectOf(items[1]))).toBe(false)
+  })
+
+  it('move puts it in the target and removes it from the open room, which autosaves', async () => {
+    const targetId = await setup()
+    const result = await useLibrary.getState().copyItemToRoom('desk', targetId, 'move')
+    expect(result.placed).toBe(true)
+    expect(useStore.getState().items.some((i) => i.id === 'desk')).toBe(false)
+    expect(storage.docs.get(targetId)!.items.map((i) => i.name)).toEqual(['Desk'])
+    expect(useLibrary.getState().status).toBe('dirty')
+    await useLibrary.getState().saveNow()
+    expect(storage.docs.get(EXAMPLE_ID)!.items.some((i) => i.id === 'desk')).toBe(false)
+    expect(storage.docs.get(EXAMPLE_ID)!.items).toHaveLength(7)
+  })
+
+  it('parks the item beside the plan when nothing fits', async () => {
+    const targetId = await setup({ name: 'Cupboard', w: 150, d: 150, start: 'empty' })
+    // something solid over the middle, so even the centre fallback is taken
+    storage.docs.get(targetId)!.items = [
+      { id: 'block', name: 'Block', kind: 'box', w: 140, d: 140, h: 100, x: 75, y: 75, rot: 0, color: '#ccc', inRoom: true },
+    ]
+    const result = await useLibrary.getState().copyItemToRoom('chair', targetId, 'copy')
+    expect(result).toEqual({ placed: false, targetName: 'Cupboard' })
+    const target = storage.docs.get(targetId)!
+    const parked = target.items.find((i) => i.kind === 'chair')!
+    expect(parked.inRoom).toBe(false)
+    expect(parked.y).toBe(150 + PARK_Y)
+    expect(parked.x).toBeGreaterThan(0)
+    expect(useLibrary.getState().rooms.find((r) => r.id === targetId)!.itemCount).toBe(1)
+
+    // a piece bigger than the room is parked too
+    const big = await useLibrary.getState().copyItemToRoom('bed', targetId, 'copy')
+    expect(big.placed).toBe(false)
+    expect(storage.docs.get(targetId)!.items.find((i) => i.kind === 'bed')!.inRoom).toBe(false)
+  })
+
+  it('copying to the open room is a no-op', async () => {
+    await setup()
+    const saves = storage.saves
+    const items = useStore.getState().items
+    const result = await useLibrary.getState().copyItemToRoom('wardrobe', EXAMPLE_ID, 'copy')
+    expect(result.placed).toBe(false)
+    expect(result.targetName).toBe("Mila's room")
+    expect(useStore.getState().items).toBe(items)
+    expect(storage.saves).toBe(saves)
+    expect(useLibrary.getState().status).toBe('saved')
+  })
+
+  it('rejects with a readable message for a missing item or room', async () => {
+    const targetId = await setup()
+    await expect(useLibrary.getState().copyItemToRoom('nothing', targetId, 'copy')).rejects.toThrow(/no longer in this room/)
+    await expect(useLibrary.getState().copyItemToRoom('wardrobe', 'room-gone', 'copy')).rejects.toThrow(/could not be found/)
+    expect(storage.docs.get(targetId)!.items).toEqual([])
+  })
+})
+
 describe('helpers', () => {
   it('roomOpenings returns the window and door lists', () => {
     const single = roomOpenings(defaultRoom)
@@ -354,11 +499,11 @@ describe('share links', () => {
       expect(doc.settings.daytime).toBe(false)
       expect(useStore.getState().daytime).toBe(false)
       expect(replaced).toEqual(['/planner?x=1'])
-      // the example room was seeded as well
-      expect(lib.rooms.map((r) => r.group).sort()).toEqual(['Examples', 'Shared'])
+      // the seed rooms were added as well
+      expect(lib.rooms.map((r) => r.group).sort()).toEqual(['Examples', 'Home', 'Shared'])
       // start() is idempotent (StrictMode mounts twice)
       await useLibrary.getState().start()
-      expect(storage.docs.size).toBe(2)
+      expect(storage.docs.size).toBe(3)
     } finally {
       delete g.location
       delete g.history

@@ -6,6 +6,7 @@ import { catalog, categories } from '../catalog'
 import { footprint, rectOf } from '../geometry'
 import { findFreeSpot, isRugKind } from '../placement'
 import { useStore, type NewItemSpec } from '../store'
+import { CopyToRoom } from './CopyToRoom'
 import type { Check } from '../types'
 
 export function Sidebar() {
@@ -129,6 +130,7 @@ function SelectionCard({ id }: { id: string }) {
         ) : (
           <button className="chip ghost" onClick={() => setConfirmDelete(true)}>Delete</button>
         )}
+        <CopyToRoom item={item} />
       </div>
     </section>
   )

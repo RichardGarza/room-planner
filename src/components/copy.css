@@ -1,0 +1,19 @@
+/* "Copy to another room…": the inline panel under the selection card's buttons and the "Copied to…" toast. */
+.copy-btn:disabled { opacity: 0.55; cursor: default; }
+.copy-hint { align-self: center; }
+
+.copy-panel { flex-basis: 100%; background: #fbf9f6; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px 10px; }
+.copy-panel .field { margin-top: 0; }
+.copy-panel select { width: 100%; background: #fff; }
+.copy-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.copy-actions .seg { margin-right: auto; padding: 2px; background: #fff; border: 1px solid var(--line); box-shadow: none; backdrop-filter: none; }
+.copy-actions .seg button { padding: 4px 10px; }
+.copy-error { margin: 8px 0 0; font-size: 12px; color: var(--bad); }
+
+.copy-toast { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 6px; background: var(--pink-soft); border-radius: 10px; padding: 8px 6px 8px 10px; font-size: 12px; line-height: 1.4; animation: copy-toast-in 0.25s ease-out; }
+.copy-toast-text { flex: 1 1 120px; }
+.copy-toast .x { flex: none; order: 1; margin: -3px -2px 0 0; }
+.copy-toast-link { order: 2; flex-basis: 100%; text-align: left; font-weight: 800; color: var(--pink); padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.copy-toast-link:hover { color: #c22e64; }
+.copy-toast.floating { position: fixed; right: 16px; bottom: 16px; z-index: 30; width: min(340px, calc(100vw - 32px)); background: #fff; border-left: 4px solid var(--pink); box-shadow: var(--shadow); }
+@keyframes copy-toast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
