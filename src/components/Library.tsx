@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getStorage } from '../storage'
-import { timeAgo, useLibrary, type StartWith } from '../library'
+import { defaultRoomSize, timeAgo, useLibrary, type StartWith } from '../library'
 import { migrateDoc } from '../migrate'
 import type { Item, Room, RoomDoc, RoomSummary } from '../types'
 import { formatRoomSize, useUnits } from '../units'
@@ -187,14 +187,24 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
   const unit = useUnits((s) => s.unit)
   const [name, setName] = useState('')
   const [group, setGroup] = useState('')
-  const [w, setW] = useState(300)
-  const [d, setD] = useState(400)
-  const [h, setH] = useState(260)
+  // 10 × 12 ft with an 8 ft ceiling in inches, 3 × 4 m with 2.6 m in cm
+  const [w, setW] = useState(() => defaultRoomSize(unit).w)
+  const [d, setD] = useState(() => defaultRoomSize(unit).d)
+  const [h, setH] = useState(() => defaultRoomSize(unit).h)
   const [start, setStart] = useState<StartWith>('basics')
   const [busy, setBusy] = useState(false)
+  const touched = useRef(false)
   const valid = name.trim().length > 0
   // the example room brings its own size
   const fixed = start === 'example'
+
+  // switching units while the form is open swaps the untouched defaults for that unit's
+  useEffect(() => {
+    if (touched.current) return
+    const size = defaultRoomSize(unit)
+    setW(size.w); setD(size.d); setH(size.h)
+  }, [unit])
+  const commit = (set: (v: number) => void) => (v: number) => { touched.current = true; set(v) }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -221,9 +231,9 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
           </datalist>
         </label>
         <div className="dims-grid">
-          <label>Width ({unit})<LengthInput min={150} max={1200} value={w} disabled={fixed} onCommit={setW} /></label>
-          <label>Depth ({unit})<LengthInput min={150} max={1200} value={d} disabled={fixed} onCommit={setD} /></label>
-          <label>Height ({unit})<LengthInput min={200} max={400} value={h} disabled={fixed} onCommit={setH} /></label>
+          <label>Width<LengthInput min={150} max={1200} value={w} disabled={fixed} onCommit={commit(setW)} /></label>
+          <label>Depth<LengthInput min={150} max={1200} value={d} disabled={fixed} onCommit={commit(setD)} /></label>
+          <label>Height<LengthInput min={200} max={400} value={h} disabled={fixed} onCommit={commit(setH)} /></label>
         </div>
         <div className="lib-start-with" role="radiogroup" aria-labelledby="lib-start-with-label">
           <span id="lib-start-with-label" className="caption">Start with</span>

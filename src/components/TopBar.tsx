@@ -210,7 +210,7 @@ export function TopBar() {
         <span className="suggest-hint-text">
           {suggested.length > 0
             ? 'New here? Those are suggested layouts — we placed your furniture three ways. Click one, then drag things around.'
-            : 'New here? ✨ Suggest layouts places your furniture a few good ways. Click it, pick one, then drag things around.'}
+            : 'New here? We can suggest layouts — click ✨ Suggest layouts, then drag things around.'}
         </span>
         <button className="suggest-hint-close" onClick={dismissHint}>Got it</button>
       </div>

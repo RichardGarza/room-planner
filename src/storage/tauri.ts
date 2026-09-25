@@ -112,7 +112,12 @@ export class TauriFsBackend implements RoomStorage {
   async list(): Promise<RoomSummary[]> {
     await ensureFolder()
     const byId = new Map<string, RoomSummary>()
-    for (const name of await roomFileNames()) {
+    const names = await roomFileNames()
+    // canonical files ("<slug>--<id>.json") are read first so a stray copy can never claim their id
+    const canonical = (n: string) => /--[^/\\]+\.json$/i.test(n)
+    const ordered = [...names.filter(canonical), ...names.filter((n) => !canonical(n))]
+    const taken = new Set<string>()
+    for (const name of ordered) {
       let doc: RoomDoc
       try {
         doc = await readRoomFile(name)
@@ -120,9 +125,17 @@ export class TauriFsBackend implements RoomStorage {
         console.warn('Skipping room file', name, describe(err))
         continue
       }
-      // A file dropped into the folder by hand (no "--<id>" suffix) is adopted
-      // under the canonical name so load()/save()/remove() can find it by id.
+      // A file dropped into the folder by hand (no "--<id>" suffix) is adopted under the
+      // canonical name so load()/save()/remove() can find it by id. It must never overwrite a
+      // room that is already there (a Finder backup copy carries the same id as the original),
+      // so such a copy becomes a room of its own with a fresh id.
       if (!name.endsWith(suffixFor(doc.id))) {
+        const clash = taken.has(doc.id) || names.some((n) => n.endsWith(suffixFor(doc.id)))
+        if (clash) {
+          const fresh = `room-${Math.random().toString(36).slice(2, 10)}`
+          console.warn(`Room file "${name}" has the id of a room that already exists; adopting it as a copy (${fresh})`)
+          doc = { ...doc, id: fresh, name: `${doc.name} (copy)` }
+        }
         try {
           await writeRoomFile(fileNameFor(doc), doc)
         } catch (err) {
@@ -135,6 +148,7 @@ export class TauriFsBackend implements RoomStorage {
           console.warn(describe(err))
         }
       }
+      taken.add(doc.id)
       const summary = summarize(doc)
       const seen = byId.get(doc.id)
       if (!seen || summary.updatedAt > seen.updatedAt) byId.set(doc.id, summary)
