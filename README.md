@@ -8,7 +8,7 @@ Inspired by [this post](https://x.com/scheemunai/status/2103059885361598633), wh
 
 ## What it does
 
-- **Start screen.** The app opens with "Start a new room" and "Open an existing room". A new room starts with the basics (door, window, bed, dresser, rug, desk), empty, or as a copy of the example room.
+- **Start screen.** The app opens with "Start a new room" and "Open an existing room". A new room starts with the basics (door, window, bed, dresser, rug, desk), empty, or as a copy of the example room. Two rooms are seeded on first launch: the example bedroom and a nursery measured in inches.
 - **Rooms library.** Your saved rooms live below the start screen. Create a room with a name and a group (for example "Home" or "2027 renovation"), reopen it later, duplicate it, rename it, export it as JSON, or import one. Every change is saved automatically about a second after you stop editing. The first launch seeds an example room.
 - **Floor plan.** Drag items, press `R` to rotate, drag them into the "out of the room" strip to remove them. The selected item shows its distance to the nearest walls.
 - **3D view.** Orbit from outside with the near walls cut away, or walk through the room with the mouse and `WASD`. Day and evening lighting. Click and drag furniture directly in 3D.
@@ -18,6 +18,10 @@ Inspired by [this post](https://x.com/scheemunai/status/2103059885361598633), wh
 - **Suggested layouts.** Every room gets ready-made arrangements. The pink "Suggested layouts" group in the top bar shows the example room's A, B, C presets, or for your own rooms a "Suggest layouts" button that works out up to three arrangements from your furniture: bed against a wall, desk by the window, chair tucked in, nightstands by the bed, rugs in the open floor, nothing in the door swing. The recommended one scored best on the checks. Add, remove, or resize furniture and a Refresh button offers new ones. Your own saved layouts sit underneath, and a one-time hint points new users at the group.
 - **Focus.** Drag the divider between the floor plan and the 3D view to any split, double-click to reset, or use the "Focus 2D / 3D" toggle (or the F key) to give the plan most of the screen while you arrange things. The split is remembered.
 - **Layouts.** Undo and redo, saved layouts per room, and a Share button that puts the whole room in a link.
+- **Units.** A cm | in toggle in the top bar and on the start screen. Lengths are stored in centimetres and shown in the unit you pick: feet and inches for long distances (11′ 9″), inches to the nearest half for sizes (53½ in). Every size field accepts what you type, in either unit: 150, 150 in, 150", 12' 6", 12 ft 6 in, 6 1/2", 150 cm, 1.5 m. The value converts when you tab or click away.
+- **Closets.** A closet is a recess in a wall with an opening. It can have no doors, hinged doors, bi-fold doors, or sliding doors, and each needs a different amount of free floor in front, which the checks enforce. Closets show on the plan and in 3D with their doors.
+- **Print / PDF.** Two products: a measured floor plan (every item with its name, size, and distance to the nearest walls, the openings, a legend, a scale note, and a check bar to confirm the printout is at actual size), and a cut-out kit (every item at scale on one page to cut out, then the empty room at exactly the same scale on the last page). Letter or A4, Save PDF or Print, ⌘P.
+- **Copy to another room.** Select a piece and copy or move it into any other saved room. It lands against a free wall there, or parked beside the plan if it does not fit, with a one-click "Open" to go and look.
 - **Display settings.** Door opening angle, blind height, bedding on or off, eye height, render quality.
 
 ## Run it in the browser
@@ -89,6 +93,7 @@ Vite, React 19, TypeScript, Three.js via react-three-fiber and drei, zustand for
 | `src/suggest.ts` | The layout suggestion engine |
 | `src/units.ts` | Unit setting, inch and feet formatting, typed-length parser |
 | `src/seeds.ts` | Rooms seeded into the library on first launch |
+| `src/print/` | The PDF sheets: measured plan and cut-out kit |
 | `src/geometry.ts` | Footprints, overlaps, gaps, door swing and doorway maths |
 | `src/checks.ts` | The rules that produce the checks list |
 | `src/migrate.ts` | Loads rooms saved by older versions |
@@ -100,6 +105,9 @@ Vite, React 19, TypeScript, Three.js via react-three-fiber and drei, zustand for
 | `src/scene/` | The 3D scene: renderer, lights, effects, cameras, walls and openings, outside, floor |
 | `src/scene/furniture/` | Every furniture kind built from primitives, plus materials and props |
 | `src/components/SplitPane.tsx` | The draggable 2D/3D divider and focus toggle |
+| `src/components/PrintDialog.tsx` | Print and PDF export dialog |
+| `src/components/CopyToRoom.tsx` | Copy or move a piece into another saved room |
+| `src/components/ClosetRows.tsx` | Closet rows in the room editor |
 | `src/components/Sidebar.tsx` | Layout notes, checks, selection, catalogue, room editor, settings |
 | `src/components/TopBar.tsx` | Back to rooms, room name, layout tabs, save state, undo/redo, share |
 | `src-tauri/` | The Mac app shell, capabilities, and icons |
