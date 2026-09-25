@@ -1,4 +1,4 @@
-import { closetClearance, closetLabel, doorClearanceFor, doorwayRect, gapBetween, isRugKind, itemsIntersect, overlapArea, polygonIntersectsRect, polygonOf, rectOf, wallStripRect } from './geometry'
+import { accessAllows, accessZones, closetClearance, closetLabel, doorClearanceFor, doorwayRect, fractionInRoom, gapBetween, isRugKind, itemsGap, itemsIntersect, overlapArea, polygonIntersectsRect, polygonOf, polygonsIntersect, rectOf, wallStripRect, type AccessZone } from './geometry'
 import type { Check, Item, Rect, Room, Wall } from './types'
 
 const MIN_PASSAGE = 60
@@ -44,6 +44,42 @@ function tucksUnder(chair: Item, desk: Item) {
   return chair.kind === 'chair' && desk.kind === 'desk' && overlapArea(rectOf(chair), rectOf(desk)) < 0.5 * chair.w * chair.d
 }
 
+/** a piece only "blocks" an access strip when it reaches at least this far into it both ways (a corner clipping it does not count) */
+const ZONE_REACH = 10
+/** a bed side counts as usable while this much of its strip is inside the room and free */
+const SIDE_FREE = 0.6
+
+/** Does a piece stand in an access strip (more than a sliver of it)? */
+function blocksZone(other: Item, zone: AccessZone) {
+  const r = rectOf(other)
+  const w = Math.min(r.x1, zone.rect.x1) - Math.max(r.x0, zone.rect.x0)
+  const h = Math.min(r.y1, zone.rect.y1) - Math.max(r.y0, zone.rect.y0)
+  if (w < ZONE_REACH || h < ZONE_REACH) return false
+  return polygonsIntersect(polygonOf(other), zone.poly)
+}
+
+/** True for the access-space checks (drawers, doors, chair, legroom, a bed's free side). */
+export function isAccessCheck(check: Check) {
+  return /^(Drawers can't open|Wardrobe doors can't open|Can't reach the shelves|Nothing can pull up to the desk|No legroom in front of|No room to sit at|Can't get to|No room in front of)/.test(check.text)
+}
+
+/** "Drawers can't open", "Wardrobe doors can't open", … for the piece whose access space is taken. */
+function accessLead(it: Item) {
+  const subject = it.name.toLowerCase()
+  switch (it.kind) {
+    case 'dresser':
+    case 'nightstand': return "Drawers can't open"
+    case 'wardrobe': return "Wardrobe doors can't open"
+    case 'bookcase':
+    case 'shelf': return "Can't reach the shelves"
+    case 'desk': return 'Nothing can pull up to the desk'
+    case 'sofa': return `No legroom in front of the ${subject}`
+    case 'table': return it.w >= 120 ? `No room to sit at the ${subject}` : `Can't get to the ${subject}`
+    case 'bed': return `Can't get to the ${subject} from either side`
+    default: return `No room in front of the ${subject}`
+  }
+}
+
 export interface CheckOptions {
   /** formats a length in cm for the check texts (default "N cm") */
   len?: (cm: number) => string
@@ -61,10 +97,13 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     .filter((i) => i.kind === 'bed' && Math.min(i.w, i.d) >= 85)
     .sort((a, b) => b.w * b.d - a.w * a.d)[0]
 
-  // 1. Items poking through walls (the turned corners, so an angled piece is judged by its real outline)
+  // 1. Items poking through walls (the turned corners, so an angled piece is judged by its real outline) or the ceiling
   for (const it of inRoom) {
     if (polygonOf(it).some(([x, y]) => x < -0.5 || y < -0.5 || x > room.w + 0.5 || y > room.d + 0.5)) {
       checks.push({ level: 'bad', text: `${it.name} goes through a wall`, itemIds: [it.id] })
+    }
+    if (it.h > room.h + 0.5) {
+      checks.push({ level: 'bad', text: `${it.name} is ${len(it.h - room.h)} taller than the ceiling`, itemIds: [it.id] })
     }
   }
 
@@ -202,7 +241,48 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     }
   })
 
-  // 8. Things kept in place (nice-to-know ok lines)
+  // 8. Access space: drawers and doors have to open, a chair has to pull out, legs need room, a bed needs a free side
+  for (const it of solid) {
+    const access = accessZones(it)
+    if (!access) continue
+    // beds people climb into are covered by the bed-exit check above
+    if (it === bed) continue
+    const subject = it.name.toLowerCase()
+    const blockersOf = (zone: AccessZone) => solid.filter((o) => o !== it && !accessAllows(it, o) && blocksZone(o, zone))
+    if (access.rule.mode === 'all') {
+      for (const zone of access.zones) {
+        if (fractionInRoom(room, zone.rect) < 0.5) {
+          checks.push({ level: 'warn', text: `${accessLead(it)}: the ${subject} faces the wall`, itemIds: [it.id] })
+          continue
+        }
+        for (const o of blockersOf(zone)) {
+          const gap = itemsGap(it, o)
+          const where = zone.face === 'front' ? 'in front of' : 'beside'
+          const how = gap < 1 ? `right ${where}` : `${len(gap)} ${where}`
+          checks.push({ level: 'warn', text: `${accessLead(it)}: ${o.name.toLowerCase()} is ${how} the ${subject}`, itemIds: [it.id, o.id] })
+        }
+      }
+    } else {
+      // one usable side is enough: a side counts while most of its strip is inside the room and free
+      const blockedBy: Item[] = []
+      let usable = 0
+      for (const zone of access.zones) {
+        const area = (zone.rect.x1 - zone.rect.x0) * (zone.rect.y1 - zone.rect.y0)
+        const inRoomFraction = fractionInRoom(room, zone.rect)
+        const blockers = blockersOf(zone)
+        const covered = blockers.reduce((sum, o) => sum + overlapArea(rectOf(o), zone.rect), 0) / Math.max(1, area)
+        if (inRoomFraction >= SIDE_FREE && inRoomFraction - covered >= SIDE_FREE) usable++
+        else blockedBy.push(...blockers)
+      }
+      if (usable === 0) {
+        const names = [...new Set(blockedBy.map((o) => o.name.toLowerCase()))]
+        const tail = names.length ? `${names.join(', ')} ${names.length > 1 ? 'are' : 'is'} in the way` : `it is boxed in by the walls`
+        checks.push({ level: 'warn', text: `${accessLead(it)}: ${tail}`, itemIds: [it.id, ...new Set(blockedBy.map((o) => o.id))] })
+      }
+    }
+  }
+
+  // 9. Things kept in place (nice-to-know ok lines)
   const stayed = solid.filter((i) => ['dresser', 'desk', 'shelf'].includes(i.kind))
   if (stayed.length === 3) checks.push({ level: 'ok', text: 'Dresser, desk and shelf stay in place', itemIds: stayed.map((i) => i.id) })
 

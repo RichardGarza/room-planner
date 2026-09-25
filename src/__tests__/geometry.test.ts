@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultItems, defaultRoom, presetLayouts } from '../data'
-import { doorClearance, doorClearanceFor, doorSwing, doorwayRect, footprint, gapBetween, intersects, itemsIntersect, polygonOf, rectOf } from '../geometry'
+import { accessAllows, accessRuleFor, accessRules, accessZones, areCompanions, doorClearance, doorClearanceFor, doorSwing, doorwayRect, footprint, frontZone, gapBetween, intersects, isSideTable, itemsGap, itemsIntersect, polygonDistance, polygonOf, rectOf } from '../geometry'
 import { runChecks } from '../checks'
 import type { Door, Item, Room } from '../types'
 
@@ -108,5 +108,68 @@ describe('checks', () => {
     const items = defaultItems.map((i) => ({ ...i, ...presetLayouts[2].placements[i.id] }))
     const texts = runChecks(defaultRoom, items).map((c) => c.text)
     expect(texts.some((t) => /window/.test(t))).toBe(true)
+  })
+})
+
+describe('access space', () => {
+  const piece = (over: Partial<Item>): Item => ({ id: 'p', name: 'p', kind: 'dresser', w: 100, d: 50, h: 80, x: 150, y: 100, rot: 0, color: '#fff', inRoom: true, ...over })
+  it('puts the front strip beyond the +d edge and turns it with the item', () => {
+    expect(frontZone(piece({}))).toEqual([[100, 125], [200, 125], [200, 170], [100, 170]])
+    // rot 90: the front faces −x, so the strip lies at x 80..125 beside the left edge
+    expect(frontZone(piece({ rot: 90 }))).toEqual([[125, 50], [125, 150], [80, 150], [80, 50]])
+    // any angle: the strip keeps its size and lies against the turned front edge
+    const turned = frontZone(piece({ rot: 30 }), 40)
+    const len = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1])
+    expect(len(turned[0], turned[1])).toBeCloseTo(100)
+    expect(len(turned[1], turned[2])).toBeCloseTo(40)
+    const front = polygonOf(piece({ rot: 30 })).slice(2) // corners 2 and 3 are the +d edge
+    expect(len(turned[0], front[1])).toBeCloseTo(0)
+    expect(len(turned[1], front[0])).toBeCloseTo(0)
+  })
+  it('knows the rules per kind', () => {
+    expect(accessRules.dresser).toMatchObject({ depth: 45 })
+    expect(accessRules.wardrobe).toMatchObject({ depth: 65 })
+    expect(accessRules.bookcase).toMatchObject({ depth: 40 })
+    expect(accessRules.desk).toMatchObject({ depth: 75 })
+    expect(accessRules.sofa).toMatchObject({ depth: 60 })
+    expect(accessRules.chair).toBeNull()
+    expect(accessRuleFor({ kind: 'table', w: 160, d: 90 })).toMatchObject({ depth: 60, faces: 'all', mode: 'all' })
+    expect(accessRuleFor({ kind: 'table', w: 50, d: 50 })).toMatchObject({ depth: 45, mode: 'any' })
+    expect(accessRuleFor({ kind: 'bed', w: 150, d: 210 })).toMatchObject({ depth: 60, faces: 'long', mode: 'any' })
+    // a bed's long sides: left/right when it is longer than wide, front/back for a crib stored the other way round
+    expect(accessZones(piece({ kind: 'bed', w: 150, d: 210 }))!.zones.map((z) => z.face)).toEqual(['left', 'right'])
+    expect(accessZones(piece({ kind: 'bed', w: 137, d: 76 }))!.zones.map((z) => z.face)).toEqual(['front', 'back'])
+    expect(accessZones(piece({ kind: 'table', w: 160, d: 90 }))!.zones).toHaveLength(4)
+    expect(accessZones(piece({ kind: 'rug' }))).toBeNull()
+  })
+  it('names companions and who may stand in whose space', () => {
+    const bed = piece({ kind: 'bed', w: 150, d: 210 }), ns = piece({ kind: 'nightstand', w: 40, d: 40 })
+    const desk = piece({ kind: 'desk' }), chair = piece({ kind: 'chair', w: 50, d: 50 })
+    const sofa = piece({ kind: 'sofa', w: 180, d: 90 }), side = piece({ kind: 'table', w: 50, d: 50 }), dining = piece({ kind: 'table', w: 160, d: 90 })
+    const rug = piece({ kind: 'rug' })
+    expect(areCompanions(bed, ns)).toBe(true)
+    expect(areCompanions(chair, desk)).toBe(true)
+    expect(areCompanions(chair, dining)).toBe(true)
+    expect(areCompanions(side, sofa)).toBe(true)
+    expect(areCompanions(ns, sofa)).toBe(true)
+    expect(areCompanions(rug, desk)).toBe(true)
+    expect(areCompanions(bed, desk)).toBe(false)
+    expect(areCompanions(dining, sofa)).toBe(false)
+    expect(isSideTable(side)).toBe(true)
+    expect(isSideTable(dining)).toBe(false)
+    expect(accessAllows(sofa, piece({ kind: 'table', w: 100, d: 60, h: 45 }))).toBe(true)
+    expect(accessAllows(sofa, piece({ kind: 'table', w: 100, d: 60, h: 75 }))).toBe(false)
+    expect(accessAllows(desk, chair)).toBe(true)
+    expect(accessAllows(desk, ns)).toBe(false)
+  })
+  it('measures gaps between turned outlines', () => {
+    const a = piece({ x: 100, y: 100, rot: 0, w: 100, d: 50 })
+    const b = piece({ id: 'b', x: 200, y: 100, rot: 0, w: 50, d: 50 })
+    expect(itemsGap(a, b)).toBe(25)
+    expect(itemsGap(a, piece({ id: 'b', x: 140, y: 100 }))).toBe(0)
+    // a square turned 45° reaches further: its corner comes 25·√2 from its centre instead of 25
+    const diamond = piece({ id: 'b', x: 200, y: 100, rot: 45, w: 50, d: 50 })
+    expect(itemsGap(a, diamond)).toBeCloseTo(50 - 25 * Math.SQRT2, 5)
+    expect(polygonDistance(polygonOf(a), polygonOf(diamond))).toBeCloseTo(50 - 25 * Math.SQRT2, 5)
   })
 })

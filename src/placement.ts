@@ -1,4 +1,4 @@
-import { closetClearance, doorSwing, footprint, intersects, isRugKind, polygonIntersectsRect, polygonOf, rectOf, wallLength, wallStripRect } from './geometry'
+import { accessAllows, accessZones, closetClearance, doorSwing, footprint, intersects, isRugKind, polygonIntersectsRect, polygonOf, rectOf, wallLength, wallStripRect, type Polygon } from './geometry'
 export { isRugKind }
 import type { Door, Item, ItemKind, Rect, Room, Rot, Wall } from './types'
 
@@ -59,13 +59,31 @@ export function findFreeSpot(room: Room, items: Item[], w: number, d: number, op
   const soft = softBlockers(room, opts.h)
   const keepsGap = prefer === 'wall' && opts.kind !== 'bed' && opts.kind !== 'nightstand' && !(opts.kind && isRugKind(opts.kind))
   const bedGaps = keepsGap ? bedGapStrips(items) : []
+  // the new piece, as far as the access rules care: its kind and size
+  const probe: Item = { id: 'new', name: '', kind: opts.kind ?? 'box', w, d, h: opts.h ?? 60, x: 0, y: 0, rot: 0, color: '', inRoom: true }
+  const solidItems = items.filter((i) => i.inRoom && !isRugKind(i.kind))
+  const zones = isRugKind(probe.kind) ? [] : accessStrips(solidItems, probe)
 
   const insideRoom = (rect: Rect) => rect.x0 >= -0.01 && rect.y0 >= -0.01 && rect.x1 <= room.w + 0.01 && rect.y1 <= room.d + 0.01
   const onNothing = (rect: Rect) => insideRoom(rect) && !solid.some((s) => polygonIntersectsRect(s, rect))
-  const isFree = (rect: Rect, strict: boolean, bedGap: boolean) =>
+  /** off everyone else's access space, and with its own drawers, doors or chair facing open floor */
+  const accessOk = (rect: Rect, spot: Spot) => {
+    if (zones.some((z) => polygonIntersectsRect(z, rect))) return false
+    const own = accessZones({ ...probe, x: spot.x, y: spot.y, rot: spot.rot })
+    if (!own) return true
+    let clear = 0
+    for (const z of own.zones) {
+      if (!insideRoom(z.rect)) continue
+      if (solidItems.some((o) => !accessAllows(probe, o) && polygonIntersectsRect(polygonOf(o), z.rect))) continue
+      clear++
+    }
+    return own.rule.mode === 'all' ? clear === own.zones.length : clear > 0
+  }
+  const isFree = (rect: Rect, spot: Spot, access: boolean, strict: boolean, bedGap: boolean) =>
     onNothing(rect) &&
     !doorBlocks(room, rect) &&
     !closets.some((c) => intersects(rect, c)) &&
+    (!access || accessOk(rect, spot)) &&
     (!strict || !soft.some((s) => intersects(rect, s))) &&
     (!bedGap || !bedGaps.some((s) => intersects(rect, s)))
 
@@ -76,13 +94,16 @@ export function findFreeSpot(room: Room, items: Item[], w: number, d: number, op
     return rectAt(spot.x, spot.y, fw, fd)
   }
 
-  // First keep clear of the window and radiator too; if that finds nothing, allow them.
+  // First keep everyone's drawers and doors free and clear of the window and radiator too; if that
+  // finds nothing, allow the window and radiator, and only then the access space.
   // Within each group (walls, then the floor grid) a spot with a gap beside the beds beats one without.
-  for (const strict of soft.length ? [true, false] : [false]) {
-    for (const group of groups()) {
-      const spots = bedGaps.length ? [...group] : group
-      for (const bedGap of bedGaps.length ? [true, false] : [false]) {
-        for (const spot of spots) if (isFree(rectFor(spot), strict, bedGap)) return { ...spot, fits: true }
+  for (const access of [true, false]) {
+    for (const strict of soft.length ? [true, false] : [false]) {
+      for (const group of groups()) {
+        const spots = bedGaps.length ? [...group] : group
+        for (const bedGap of bedGaps.length ? [true, false] : [false]) {
+          for (const spot of spots) if (isFree(rectFor(spot), spot, access, strict, bedGap)) return { ...spot, fits: true }
+        }
       }
     }
   }
@@ -127,6 +148,21 @@ function bedGapStrips(items: Item[]): Rect[] {
     else if (ny < 0) out.push({ x0: r.x0, y0: r.y0 - FOOT_GAP, x1: r.x1, y1: r.y0 })
     else if (nx > 0) out.push({ x0: r.x1, y0: r.y0, x1: r.x1 + FOOT_GAP, y1: r.y1 })
     else out.push({ x0: r.x0 - FOOT_GAP, y0: r.y0, x1: r.x0, y1: r.y1 })
+  }
+  return out
+}
+
+/**
+ * The access space of everything already in the room that the new piece may not stand in:
+ * the strips a dresser, wardrobe, desk or dining table needs (a bed's sides are only a preference
+ * and are handled by bedGapStrips). Companions are allowed in: a chair at a desk, a nightstand by a bed.
+ */
+function accessStrips(solidItems: Item[], probe: Item): Polygon[] {
+  const out: Polygon[] = []
+  for (const host of solidItems) {
+    const access = accessZones(host)
+    if (!access || access.rule.mode !== 'all' || accessAllows(host, probe)) continue
+    for (const z of access.zones) out.push(z.poly)
   }
   return out
 }
