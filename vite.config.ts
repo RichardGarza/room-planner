@@ -1,8 +1,9 @@
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
+  test: { exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', 'src-tauri/**'] },
   plugins: [react()],
   // Tauri prints its own output; keep Vite from wiping it.
   clearScreen: false,

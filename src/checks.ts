@@ -48,7 +48,10 @@ export function runChecks(room: Room, items: Item[]): Check[] {
   const checks: Check[] = []
   const inRoom = items.filter((i) => i.inRoom)
   const solid = inRoom.filter((i) => !isRugKind(i.kind))
-  const bed = inRoom.find((i) => i.kind === 'bed')
+  // Passage and bed-exit checks only make sense for beds people climb into, not cribs.
+  const bed = [...inRoom]
+    .filter((i) => i.kind === 'bed' && Math.min(i.w, i.d) >= 85)
+    .sort((a, b) => b.w * b.d - a.w * a.d)[0]
 
   // 1. Items poking through walls
   for (const it of inRoom) {

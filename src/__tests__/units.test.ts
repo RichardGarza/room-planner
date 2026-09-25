@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+import { feetInchesText, formatLength, formatRoomSize, formatSize, inchesText, parseLength, toUnitNumber } from '../units'
+
+const cm = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100)
+
+describe('parseLength', () => {
+  it('reads bare numbers in the current unit', () => {
+    expect(cm(parseLength('150', 'cm'))).toBe(150)
+    expect(cm(parseLength('150', 'in'))).toBe(381)
+    expect(cm(parseLength(' 12.5 ', 'in'))).toBe(31.75)
+  })
+  it('reads inches with any spelling', () => {
+    for (const t of ['150 in', '150in', '150"', '150 inches', '150 inch', '150″']) expect(cm(parseLength(t, 'cm'))).toBe(381)
+    expect(cm(parseLength('6 1/2"', 'cm'))).toBe(16.51)
+    expect(cm(parseLength('1/2 in', 'cm'))).toBe(1.27)
+  })
+  it('reads feet and feet-inches', () => {
+    expect(cm(parseLength("12'", 'cm'))).toBe(365.76)
+    expect(cm(parseLength('12 ft', 'cm'))).toBe(365.76)
+    expect(cm(parseLength('12 feet', 'cm'))).toBe(365.76)
+    expect(cm(parseLength('12\' 6"', 'cm'))).toBe(381)
+    expect(cm(parseLength("12'6", 'cm'))).toBe(381)
+    expect(cm(parseLength('12 ft 6 in', 'cm'))).toBe(381)
+    expect(cm(parseLength('12ft6in', 'cm'))).toBe(381)
+    expect(cm(parseLength('12′ 6½″'.replace('½', ' 1/2'), 'cm'))).toBe(382.27)
+    expect(cm(parseLength('3 ft 2 1/2 in', 'cm'))).toBe(97.79)
+  })
+  it('reads metric', () => {
+    expect(cm(parseLength('150 cm', 'in'))).toBe(150)
+    expect(cm(parseLength('1.5 m', 'in'))).toBe(150)
+    expect(cm(parseLength('1,5 m', 'in'))).toBe(150)
+    expect(cm(parseLength('1500 mm', 'in'))).toBe(150)
+  })
+  it('rejects nonsense', () => {
+    expect(parseLength('', 'cm')).toBeNull()
+    expect(parseLength('abc', 'cm')).toBeNull()
+    expect(parseLength('12 x 6', 'cm')).toBeNull()
+    expect(parseLength('1/0 in', 'cm')).toBeNull()
+  })
+})
+
+describe('formatting', () => {
+  it('shows inches to the nearest half', () => {
+    expect(inchesText(54)).toBe('54')
+    expect(inchesText(53.5)).toBe('53½')
+    expect(inchesText(0.5)).toBe('½')
+    expect(inchesText(53.9)).toBe('54')
+    expect(inchesText(41 / 2.54)).toBe('16')
+  })
+  it('shows feet and inches for long lengths', () => {
+    expect(feetInchesText(141)).toBe('11′ 9″')
+    expect(feetInchesText(24)).toBe('24″')
+    expect(feetInchesText(36)).toBe('3′')
+    expect(feetInchesText(143.8)).toBe('12′')
+  })
+  it('formats lengths and sizes in either unit', () => {
+    expect(formatLength(137, { unit: 'cm' })).toBe('137 cm')
+    expect(formatLength(137, { unit: 'in' })).toBe('54 in')
+    expect(formatLength(358, { unit: 'in', feet: true })).toBe('11′ 9″')
+    expect(formatSize(137, 76, 89, { unit: 'in' })).toBe('54 × 30 × 35 in')
+    expect(formatSize(137, 76, undefined, { unit: 'cm' })).toBe('137 × 76 cm')
+    expect(formatRoomSize(358, 295, { unit: 'in' })).toBe('11′ 9″ × 9′ 8″')
+    expect(formatRoomSize(358, 295, { unit: 'cm' })).toBe('358 × 295 cm')
+  })
+  it('converts to a typeable number', () => {
+    expect(toUnitNumber(381, 'in')).toBe(150)
+    expect(toUnitNumber(137, 'in')).toBe(54)
+    expect(toUnitNumber(16.51, 'in')).toBe(6.5)
+    expect(toUnitNumber(137.4, 'cm')).toBe(137)
+  })
+})

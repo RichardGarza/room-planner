@@ -176,3 +176,12 @@ h5 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spac
 .palette-custom-toggle { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12px; padding: 4px 0; color: var(--muted); }
 .palette-custom-toggle:hover { color: var(--ink); }
 .palette-custom { margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--line); }
+
+/* length fields: number + unit suffix, parse on blur */
+.len-input { display: inline-flex; align-items: center; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fbf9f6; overflow: hidden; }
+.len-input input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 6px 4px 6px 8px; font: inherit; font-weight: 700; color: var(--ink); }
+.len-input input:focus { outline: none; }
+.len-input:focus-within { border-color: var(--pink); box-shadow: 0 0 0 2px var(--pink-soft); }
+.len-input .len-unit { padding: 0 8px 0 2px; font-size: 10px; color: var(--muted); font-weight: 700; }
+.len-input.bad { border-color: var(--bad); animation: shake 0.3s; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
