@@ -5,9 +5,10 @@ import { CLOSET_HEIGHT, wallLength } from '../geometry'
 import { useStore } from '../store'
 import type { Door, Opening, Radiator as RadiatorSpec, Room, Wall } from '../types'
 import { Closet } from './Closet'
-import { Outside } from './Outside'
+import { PENDANT_DROP } from './Lights'
+import { HALL_STENCIL, MASK_ORDER, MaskPlane, Outside, stencilTest, WORLD_ORDER } from './Outside'
 import { ceilingMaps, fabricMaps, plasterMaps } from './textures'
-import { cm, mergedBoxes, profileAlongX, seeded, starShape, WALL_T, worldUvBox, type BoxSpec } from './util'
+import { cm, mergedBoxes, profileAlongX, seeded, starShape, useDisposable, WALL_T, worldUvBox, type BoxSpec } from './util'
 
 /* ---------------------------------- shell --------------------------------- */
 
@@ -50,6 +51,18 @@ function clothMat(color: string, detail: Detail) {
     return m
   })
 }
+/** A roller blind lit from behind by daylight: pale cloth with a soft glow of its own. */
+function litBlindMat(detail: Detail) {
+  return sharedMat(`blind-lit-${detail}`, () => {
+    const m = new THREE.MeshStandardMaterial({ color: '#f1ece4', roughness: 1, side: THREE.DoubleSide, emissive: '#fff2dc', emissiveIntensity: 0.35 })
+    if (detail === 'best') {
+      const f = fabricMaps()
+      m.bumpMap = f.bumpMap
+      m.bumpScale = 0.0025
+    }
+    return m
+  })
+}
 export function wallMat(color: string, detail: Detail) {
   return sharedMat(`wall-${color}-${detail}`, () => {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0 })
@@ -65,6 +78,9 @@ export function wallMat(color: string, detail: Detail) {
     return m
   })
 }
+/* The outside of the walls, seen from the outside presets: neutral render, a paler top. */
+const wallOuter = () => paint('#e6e0d8', 0.9)
+const wallTop = () => paint('#f3efe9', 0.9)
 
 const SKIRT_H = 0.12
 const skirtProfile: [number, number][] = [[0, 0], [0.018, 0], [0.018, 0.092], [0.015, 0.1], [0.011, 0.104], [0.011, 0.111], [0.005, 0.118], [0, SKIRT_H]]
@@ -85,6 +101,8 @@ export function Shell({ room }: { room: Room }) {
   const W = cm(room.w), D = cm(room.d), H = cm(room.h)
   const walls = useRef<Record<Wall, THREE.Group | null>>({ top: null, bottom: null, left: null, right: null })
   const ceiling = useRef<THREE.Group>(null)
+  const pendant = useRef<THREE.Group>(null)
+  const dir = useMemo(() => new THREE.Vector3(), [])
 
   useFrame(({ camera }) => {
     const c = camera.position
@@ -94,11 +112,16 @@ export function Shell({ room }: { room: Room }) {
     if (w.bottom) w.bottom.visible = !(outside && c.z > D - 0.2)
     if (w.left) w.left.visible = !(outside && c.x < 0.2)
     if (w.right) w.right.visible = !(outside && c.x > W - 0.2)
-    if (ceiling.current) ceiling.current.visible = !outside
+    // The ceiling faces down, so from above it is culled by itself; from outside below the
+    // ceiling line it would hide the room, so it goes away there.
+    if (ceiling.current) ceiling.current.visible = !(outside && c.y < H)
+    // Looking steeply down from above the ceiling, the pendant reads as a white disc over the bed.
+    camera.getWorldDirection(dir)
+    if (pendant.current) pendant.current.visible = !(outside && c.y > H && -dir.y > 0.8)
   })
 
-  const ceilMat = useMemo(() => {
-    const m = new THREE.MeshStandardMaterial({ color: '#f7f4ef', roughness: 1 })
+  const ceilMat = useDisposable(useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: '#f7f4ef', roughness: 1, envMapIntensity: 1.3, emissive: '#fffaf2', emissiveIntensity: 0 })
     if (quality === 'best') {
       const c = ceilingMaps()
       m.bumpMap = c.bumpMap
@@ -106,21 +129,33 @@ export function Shell({ room }: { room: Room }) {
       m.roughnessMap = c.roughnessMap
     }
     return m
-  }, [quality])
+  }, [quality]))
   useLayoutEffect(() => {
     if (ceilMat.bumpMap) ceilMat.bumpMap.repeat.set(W, D)
     if (ceilMat.roughnessMap) ceilMat.roughnessMap.repeat.set(W, D)
   }, [ceilMat, W, D])
+  useLayoutEffect(() => {
+    // by day the ceiling is the brightest large surface in a room; a faint self-glow keeps it from going tan
+    ceilMat.emissiveIntensity = daytime ? 0.07 : 0
+  }, [ceilMat, daytime])
 
   return (
     <group>
-      {/* ceiling (walk mode only) */}
+      {/* shadow-only lid: always mounted, draws nothing, but stops the sun entering over the walls
+          (the visible ceiling is hidden in some views and hidden objects cast no shadow) */}
+      <mesh position={[W / 2, H + 0.01, D / 2]} rotation={[-Math.PI / 2, 0, 0]} castShadow>
+        <planeGeometry args={[W + 2 * WALL_T + 0.1, D + 2 * WALL_T + 0.1]} />
+        <meshBasicMaterial colorWrite={false} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      {/* ceiling (underside only) */}
       <group ref={ceiling}>
         <mesh position={[W / 2, H, D / 2]} rotation={[Math.PI / 2, 0, 0]} material={ceilMat} receiveShadow>
           <planeGeometry args={[W, D]} />
         </mesh>
       </group>
-      <Pendant position={[W / 2, H, D / 2]} daytime={daytime} />
+      <group ref={pendant}>
+        <Pendant position={[W / 2, H, D / 2]} daytime={daytime} />
+      </group>
 
       {(['top', 'bottom', 'left', 'right'] as Wall[]).map((wall) => {
         const t = wallTransform(room, wall)
@@ -134,25 +169,42 @@ export function Shell({ room }: { room: Room }) {
   )
 }
 
-/** Pendant lamp: ceiling rose, flex, a fabric drum shade and the bulb inside it. */
+/**
+ * Pendant lamp: ceiling rose, a short flex, a fabric drum shade (an outer skin and a slightly
+ * warmer inner skin so it has volume) and the bulb inside. The shade hangs PENDANT_DROP below
+ * the ceiling, so its bottom clears 2.05 m in a 2.44 m room.
+ */
 function Pendant({ position, daytime }: { position: [number, number, number]; daytime: boolean }) {
+  const SHADE_H = 0.18
+  const top = -PENDANT_DROP + SHADE_H / 2
+  const flexLen = -0.024 - top
   // by day a fabric shade; at night the lit shade is an even warm glow (unlit material), the bulb blooms
-  const shadeDay = useMemo(() => new THREE.MeshStandardMaterial({ color: '#f6efe6', roughness: 1, side: THREE.DoubleSide }), [])
-  const shadeNight = useMemo(() => new THREE.MeshBasicMaterial({ color: '#f3c48f', side: THREE.DoubleSide }), [])
-  const bulb = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff9ee', roughness: 0.4, emissive: '#ffd9a6', emissiveIntensity: 0 }), [])
+  const mats = useDisposable(useMemo(() => ({
+    outerDay: new THREE.MeshStandardMaterial({ color: '#f6efe6', roughness: 1, side: THREE.FrontSide }),
+    innerDay: new THREE.MeshStandardMaterial({ color: '#ece1d2', roughness: 1, side: THREE.BackSide }),
+    outerNight: new THREE.MeshBasicMaterial({ color: '#f0c08a', side: THREE.FrontSide }),
+    innerNight: new THREE.MeshBasicMaterial({ color: '#ffe2b8', side: THREE.BackSide }),
+    bulb: new THREE.MeshStandardMaterial({ color: '#fff9ee', roughness: 0.4, emissive: '#ffd9a6', emissiveIntensity: 0 }),
+    rose: new THREE.MeshStandardMaterial({ color: '#f1ece5', roughness: 0.7, emissive: '#ffcf98', emissiveIntensity: 0 }),
+    dispose() { for (const m of [this.outerDay, this.innerDay, this.outerNight, this.innerNight, this.bulb, this.rose]) m.dispose() },
+  }), []))
+  const { outerDay, innerDay, outerNight, innerNight, bulb, rose } = mats
   useLayoutEffect(() => {
     bulb.emissiveIntensity = daytime ? 0 : 2.4
-  }, [daytime, bulb])
-  const shade = daytime ? shadeDay : shadeNight
+    rose.emissiveIntensity = daytime ? 0 : 0.3 // otherwise the rose sits in the spot's own shadow as a black crescent
+  }, [daytime, bulb, rose])
   return (
     <group position={position}>
-      <mesh position={[0, -0.012, 0]} material={paint('#f1ece5', 0.7)}><cylinderGeometry args={[0.06, 0.07, 0.024, 20]} /></mesh>
-      <mesh position={[0, -0.18, 0]} material={paint('#6a6560', 0.8)}><cylinderGeometry args={[0.004, 0.004, 0.34, 8]} /></mesh>
-      <mesh position={[0, -0.44, 0]} material={shade}>
-        <cylinderGeometry args={[0.16, 0.19, 0.2, 28, 1, true]} />
+      <mesh position={[0, -0.012, 0]} material={rose}><cylinderGeometry args={[0.06, 0.07, 0.024, 20]} /></mesh>
+      <mesh position={[0, -0.024 - flexLen / 2, 0]} material={paint('#6a6560', 0.8)}><cylinderGeometry args={[0.004, 0.004, flexLen, 8]} /></mesh>
+      <mesh position={[0, -PENDANT_DROP, 0]} material={daytime ? outerDay : outerNight}>
+        <cylinderGeometry args={[0.14, 0.16, SHADE_H, 28, 1, true]} />
       </mesh>
-      <mesh position={[0, -0.34, 0]} material={paint('#f1ece5', 0.7)}><cylinderGeometry args={[0.16, 0.16, 0.006, 28]} /></mesh>
-      <mesh position={[0, -0.41, 0]} material={bulb}><sphereGeometry args={[0.035, 16, 12]} /></mesh>
+      <mesh position={[0, -PENDANT_DROP, 0]} material={daytime ? innerDay : innerNight}>
+        <cylinderGeometry args={[0.137, 0.157, SHADE_H - 0.004, 28, 1, true]} />
+      </mesh>
+      <mesh position={[0, top, 0]} material={paint('#f1ece5', 0.7)}><cylinderGeometry args={[0.14, 0.14, 0.006, 28]} /></mesh>
+      <mesh position={[0, -PENDANT_DROP + 0.02, 0]} material={bulb}><sphereGeometry args={[0.032, 16, 12]} /></mesh>
     </group>
   )
 }
@@ -170,8 +222,11 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
   const openings = [...windows, ...doors, ...cuts].sort((a, b) => a.offset - b.offset)
   const mat = wallMat(color, detail)
   const trim = paint('#f8f6f2', 0.5)
+  // worldUvBox face order: +x, -x, +y, -y, +z (the room side), -z (outdoors)
+  const faces = useMemo(() => [wallOuter(), wallOuter(), wallTop(), wallOuter(), mat, wallOuter()], [mat])
 
   // Solid pieces: split the wall at each opening's edges (overlapping openings just merge).
+  const openingsKey = JSON.stringify(openings)
   const pieces = useMemo(() => {
     const out: { x: number; y: number; w: number; h: number }[] = []
     let cursor = 0
@@ -191,10 +246,13 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
       const shift = (i === out.length - 1 ? WALL_T / 2 : 0) - (i === 0 ? WALL_T / 2 : 0)
       return { ...p, x: p.x + shift, w: p.w + ext, geo: worldUvBox(p.w + ext, p.h, WALL_T) }
     })
-  }, [L, H, JSON.stringify(openings)])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [L, H, openingsKey])
+  useDisposable(useMemo(() => pieces.map((p) => p.geo), [pieces]))
 
   // Skirting and cornice run along the wall; the skirting stops at each door and closet.
-  const skirting = useMemo(() => {
+  const doorsKey = JSON.stringify(doors), cutsKey = JSON.stringify(cuts)
+  const skirting = useDisposable(useMemo(() => {
     const runs: [number, number][] = []
     let sc = 0
     for (const d of [...doors, ...cuts].sort((a, b) => a.offset - b.offset)) {
@@ -204,13 +262,14 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
     }
     if (sc < L) runs.push([sc, L])
     return runs.map(([a, b]) => profileAlongX(skirtProfile, a, b))
-  }, [L, JSON.stringify(doors), JSON.stringify(cuts)])
-  const cornice = useMemo(() => profileAlongX(corniceProfile(H), 0, L), [H, L])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [L, doorsKey, cutsKey]))
+  const cornice = useDisposable(useMemo(() => profileAlongX(corniceProfile(H), 0, L), [H, L]))
 
   return (
     <group>
       {pieces.map((p, i) => (
-        <mesh key={i} geometry={p.geo} material={mat} position={[p.x, p.y, -WALL_T / 2]} receiveShadow castShadow />
+        <mesh key={i} geometry={p.geo} material={faces} position={[p.x, p.y, -WALL_T / 2]} receiveShadow castShadow />
       ))}
       {skirting.map((g, i) => <mesh key={i} geometry={g} material={trim} castShadow receiveShadow />)}
       <mesh geometry={cornice} material={paint('#f9f7f3', 0.8)} />
@@ -224,23 +283,33 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
   )
 }
 
-/** A pleated curtain: a plane whose depth follows a sine wave across its width. */
+/** A pleated curtain: a plane whose depth follows a sine wave across its width, each fold a little different. */
 function useCurtainGeometry(width: number, height: number, detail: Detail) {
-  return useMemo(() => {
-    const seg = detail === 'best' ? 40 : 16
-    const g = new THREE.PlaneGeometry(width, height, seg, 2)
+  return useDisposable(useMemo(() => {
+    const seg = detail === 'best' ? 48 : 16
+    const g = new THREE.PlaneGeometry(width, height, seg, 3)
     const pos = g.getAttribute('position') as THREE.BufferAttribute
     const folds = Math.max(2, Math.round(width / 0.09))
+    const rnd = seeded(Math.round(width * 1000) + 3)
+    const foldAmp = Array.from({ length: folds + 1 }, () => 0.028 + rnd() * 0.014)
+    const foldShift = Array.from({ length: folds + 1 }, () => (rnd() - 0.5) * 0.6)
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i)
-      const u = (x / width + 0.5) * Math.PI * 2 * folds
+      const t = (x / width + 0.5) * folds
+      const f = Math.min(folds, Math.max(0, Math.floor(t)))
+      const u = t * Math.PI * 2 + foldShift[f]
       const taper = 0.75 + 0.25 * ((y / height) + 0.5) // pleats get slightly flatter toward the hem
-      pos.setZ(i, Math.sin(u) * 0.022 * taper)
+      pos.setZ(i, Math.sin(u) * foldAmp[f] * taper)
     }
     pos.needsUpdate = true
     g.computeVertexNormals()
     return g
-  }, [width, height, detail])
+  }, [width, height, detail]))
+}
+
+/** Unit-height blind cloth hanging from y = 0; the mesh scales it to the blind's drop. */
+function useBlindGeometry(width: number) {
+  return useDisposable(useMemo(() => new THREE.PlaneGeometry(width, 1).translate(0, -0.5, 0), [width]))
 }
 
 export function Window({ win, daytime, detail }: { win: Opening; daytime: boolean; detail: Detail }) {
@@ -256,15 +325,18 @@ export function Window({ win, daytime, detail }: { win: Opening; daytime: boolea
   const metal = chrome()
   const rodMetal = brushed()
   const cloth = clothMat('#e4dcd3', detail)
-  const blindCloth = clothMat('#f1ece4', detail)
+  const blindCloth = daytime ? litBlindMat(detail) : clothMat('#f1ece4', detail)
   const curtainTop = s + hh + 0.22
   const curtainBottom = Math.max(0.04, s - 0.28)
   const curtainH = curtainTop - curtainBottom
   const curtainW = 0.42
   const curtain = useCurtainGeometry(curtainW, curtainH, detail)
+  const blindGeo = useBlindGeometry(ww + 0.08)
+  const rings = useRef<THREE.InstancedMesh>(null)
+  const ringCount = 12
 
   // Frame + transom + mullions as one geometry; the outer frame sits deep in the reveal.
-  const sash = useMemo(() => {
+  const sash = useDisposable(useMemo(() => {
     const boxes: BoxSpec[] = [
       [cx, s + 0.035, zMid + 0.01, ww, 0.07, 0.08],
       [cx, s + hh - 0.035, zMid + 0.01, ww, 0.07, 0.08],
@@ -280,27 +352,46 @@ export function Window({ win, daytime, detail }: { win: Opening; daytime: boolea
       boxes.push([(px0 + px1) / 2, s + hh - 0.075, zMid + 0.035, px1 - px0, 0.012, 0.02])
     }
     return mergedBoxes(boxes)
-  }, [cx, cy, s, hh, ww, x0, transom, panes, zMid])
+  }, [cx, cy, s, hh, ww, x0, transom, panes, zMid]))
 
-  const reveal = useMemo(() => mergedBoxes([
+  const reveal = useDisposable(useMemo(() => mergedBoxes([
     [cx, s + 0.012, zMid, ww + 0.05, 0.024, WALL_T + 0.01],
     [cx, s + hh - 0.012, zMid, ww + 0.05, 0.024, WALL_T + 0.01],
     [x0 + 0.012, cy, zMid, 0.024, hh, WALL_T + 0.01],
     [x0 + ww - 0.012, cy, zMid, 0.024, hh, WALL_T + 0.01],
-  ]), [cx, cy, s, hh, ww, x0, zMid])
+  ]), [cx, cy, s, hh, ww, x0, zMid]))
 
-  const glass = useMemo(() => new THREE.MeshPhysicalMaterial({
-    color: daytime ? '#dbeeff' : '#7e93bd',
+  // by night the glass is more of a mirror: the lit room reflects in it instead of a black void
+  const glass = useDisposable(useMemo(() => new THREE.MeshPhysicalMaterial({
+    color: daytime ? '#dbeeff' : '#8fa1c4',
     transparent: true,
-    opacity: daytime ? 0.16 : 0.3,
+    opacity: daytime ? 0.16 : 0.45,
     roughness: 0.04,
     metalness: 0,
     clearcoat: 1,
     clearcoatRoughness: 0.04,
-    envMapIntensity: 1.6,
+    envMapIntensity: daytime ? 1.6 : 3,
     side: THREE.DoubleSide,
     depthWrite: false,
-  }), [daytime])
+  }), [daytime]))
+
+  // curtain rings sit on the rod above each curtain's header
+  useLayoutEffect(() => {
+    const m = rings.current
+    if (!m) return
+    const o = new THREE.Object3D()
+    const per = ringCount / 2
+    let i = 0
+    for (const x of [x0 - 0.2, x0 + ww + 0.2]) {
+      for (let k = 0; k < per; k++) {
+        o.position.set(x - curtainW / 2 + ((k + 0.5) / per) * curtainW, curtainTop + 0.02, 0.14)
+        o.rotation.set(0, Math.PI / 2, 0)
+        o.updateMatrix()
+        m.setMatrixAt(i++, o.matrix)
+      }
+    }
+    m.instanceMatrix.needsUpdate = true
+  }, [x0, ww, curtainTop])
 
   return (
     <group>
@@ -321,18 +412,12 @@ export function Window({ win, daytime, detail }: { win: Opening; daytime: boolea
       <mesh position={[cx, s - 0.012, 0.075]} material={frame} castShadow receiveShadow><boxGeometry args={[ww + 0.2, 0.024, 0.27]} /></mesh>
       <mesh position={[cx, s - 0.034, 0.2]} material={frame}><boxGeometry args={[ww + 0.2, 0.02, 0.02]} /></mesh>
       <mesh position={[cx, s - 0.06, 0.008]} material={frame}><boxGeometry args={[ww + 0.14, 0.05, 0.016]} /></mesh>
-      {/* roller blind: housing, end caps, cloth, bottom bar and pull cord */}
+      {/* roller blind: housing, cloth (always mounted, scaled to its drop so it casts a matching shadow), bottom bar and pull cord */}
       <mesh position={[cx, s + hh + 0.06, 0.05]} material={paint('#ecebe7', 0.7)} castShadow><boxGeometry args={[ww + 0.12, 0.09, 0.09]} /></mesh>
-      {blindH > 0.01 && (
-        <>
-          <mesh position={[cx, s + hh + 0.02 - blindH / 2, 0.048]} material={blindCloth} castShadow>
-            <planeGeometry args={[ww + 0.08, blindH + 0.04]} />
-          </mesh>
-          <mesh position={[cx, s + hh - blindH, 0.048]} material={paint('#dcd7cd', 0.8)}><boxGeometry args={[ww + 0.08, 0.02, 0.022]} /></mesh>
-        </>
-      )}
+      <mesh geometry={blindGeo} position={[cx, s + hh + 0.02, 0.048]} scale={[1, Math.max(0.001, blindH + 0.02), 1]} material={blindCloth} castShadow />
+      <mesh position={[cx, s + hh - blindH, 0.048]} material={paint('#dcd7cd', 0.8)}><boxGeometry args={[ww + 0.08, 0.02, 0.022]} /></mesh>
       <mesh position={[x0 + ww + 0.045, s + hh / 2 + 0.02, 0.09]} material={paint('#cfcac2', 0.9)}><cylinderGeometry args={[0.003, 0.003, hh, 6]} /></mesh>
-      {/* curtain rod with finials and brackets, and a pleated curtain each side */}
+      {/* curtain rod with finials and brackets, rings, and a pleated curtain with a header each side */}
       <mesh position={[cx, curtainTop + 0.02, 0.14]} rotation={[0, 0, Math.PI / 2]} material={rodMetal}><cylinderGeometry args={[0.013, 0.013, ww + 1.1, 12]} /></mesh>
       {[cx - ww / 2 - 0.55, cx + ww / 2 + 0.55].map((x, i) => (
         <mesh key={i} position={[x, curtainTop + 0.02, 0.14]} material={rodMetal}><sphereGeometry args={[0.03, 14, 10]} /></mesh>
@@ -340,8 +425,14 @@ export function Window({ win, daytime, detail }: { win: Opening; daytime: boolea
       {[cx - ww / 2 - 0.35, cx + ww / 2 + 0.35].map((x, i) => (
         <mesh key={i} position={[x, curtainTop + 0.02, 0.07]} rotation={[Math.PI / 2, 0, 0]} material={rodMetal}><cylinderGeometry args={[0.008, 0.008, 0.14, 8]} /></mesh>
       ))}
+      <instancedMesh ref={rings} args={[undefined, undefined, ringCount]} material={rodMetal}>
+        <torusGeometry args={[0.022, 0.004, 6, 14]} />
+      </instancedMesh>
       {[x0 - 0.2, x0 + ww + 0.2].map((x, i) => (
-        <mesh key={i} geometry={curtain} material={cloth} position={[x, (curtainTop + curtainBottom) / 2, 0.12]} castShadow receiveShadow />
+        <group key={i}>
+          <mesh geometry={curtain} material={cloth} position={[x, (curtainTop + curtainBottom) / 2, 0.12]} castShadow receiveShadow />
+          <mesh position={[x, curtainTop - 0.03, 0.12]} material={cloth} castShadow><boxGeometry args={[curtainW + 0.02, 0.07, 0.06]} /></mesh>
+        </group>
       ))}
     </group>
   )
@@ -354,7 +445,7 @@ export function Radiator({ radiator: r }: { radiator: RadiatorSpec }) {
   const white = paint('#f7f7f5', 0.45)
   const metal = chrome()
   const pipeLen = y0 + 0.08
-  const fins = useMemo(() => mergedBoxes(Array.from({ length: finCount }, (_, i): BoxSpec => [-w / 2 + (i + 0.5) * (w / finCount), 0, 0, w / finCount - 0.012, h * 0.92, d])), [finCount, w, h, d])
+  const fins = useDisposable(useMemo(() => mergedBoxes(Array.from({ length: finCount }, (_, i): BoxSpec => [-w / 2 + (i + 0.5) * (w / finCount), 0, 0, w / finCount - 0.012, h * 0.92, d])), [finCount, w, h, d]))
   return (
     <group position={[x0 + w / 2, y0 + h / 2, d / 2 + 0.02]}>
       {/* back panel and front convector fins */}
@@ -380,10 +471,22 @@ export function Radiator({ radiator: r }: { radiator: RadiatorSpec }) {
   )
 }
 
+/* Hall materials are only ever seen through the doorway: they carry the door mask's stencil test. */
+const hallMat = (color: string, roughness = 0.95) => sharedMat(`hall-${color}-${roughness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0, ...stencilTest(HALL_STENCIL) }))
+
 export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; daytime: boolean }) {
   const doorAngle = useStore((s) => s.doorAngle)
   const view = useStore((s) => s.view)
   const x0 = cm(d.offset), ww = cm(d.width), hh = cm(d.height), H = cm(room.h)
+  const hallRef = useRef<THREE.Group>(null)
+  const dir = useMemo(() => new THREE.Vector3(), [])
+  // Looking steeply down from above the ceiling, the doorway's projection stretches over the hall
+  // floor beyond the wall; the hall is for looking through the door, so it goes away there.
+  useFrame(({ camera }) => {
+    if (!hallRef.current) return
+    camera.getWorldDirection(dir)
+    hallRef.current.visible = !(view === 'outside' && camera.position.y > H && -dir.y > 0.8)
+  })
   const cx = x0 + ww / 2
   // hinge 'left' = smaller offset. The leaf is built along local +x from the hinge and turns about y:
   // a negative turn takes +x toward local +z (into the room), a positive one toward -z (out of the room).
@@ -395,17 +498,19 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
   const trim = paint('#fbfaf7', 0.5)
   const leafPaint = paint('#f9f7f3', 0.5)
   const panelPaint = paint('#f2efe9', 0.6)
+  const leafEdge = paint('#8d857c', 0.7)
   const metal = chrome()
-  const hall = paint('#ddd6cc', 0.95)
+  const hall = hallMat('#ddd6cc')
+  const hallTrim = hallMat('#fbfaf7', 0.5)
   const LEAF_T = 0.045
 
-  const jamb = useMemo(() => mergedBoxes([
+  const jamb = useDisposable(useMemo(() => mergedBoxes([
     [x0 + 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
     [x0 + ww - 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
     [cx, hh + 0.02, -WALL_T / 2, ww + 0.08, 0.04, WALL_T],
-  ]), [x0, ww, hh, cx])
+  ]), [x0, ww, hh, cx]))
   // architrave on both faces of the wall, with a slightly heavier head piece
-  const architrave = useMemo(() => {
+  const architrave = useDisposable(useMemo(() => {
     const boxes: BoxSpec[] = []
     for (const z of [0.012, -WALL_T - 0.012]) {
       boxes.push([x0 - 0.045, hh / 2 + 0.02, z, 0.085, hh + 0.04, 0.024])
@@ -414,7 +519,7 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
       boxes.push([cx, hh + 0.135, z * 1.15, ww + 0.22, 0.012, 0.03])
     }
     return mergedBoxes(boxes)
-  }, [x0, ww, hh, cx])
+  }, [x0, ww, hh, cx]))
   // four raised panels on each face of the leaf
   const panels = useMemo(() => {
     const frames: BoxSpec[] = [], raised: BoxSpec[] = []
@@ -428,7 +533,8 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
     }
     return { frames: mergedBoxes(frames), raised: mergedBoxes(raised) }
   }, [ww, hh])
-  const hinges = useMemo(() => mergedBoxes([0.25, hh / 2, hh - 0.25].map((y): BoxSpec => [0.004, y, LEAF_T / 2, 0.012, 0.1, 0.012])), [hh])
+  useDisposable(useMemo(() => [panels.frames, panels.raised], [panels]))
+  const hinges = useDisposable(useMemo(() => mergedBoxes([0.25, hh / 2, hh - 0.25].map((y): BoxSpec => [0.004, y, LEAF_T / 2, 0.012, 0.1, 0.012])), [hh]))
 
   return (
     <group>
@@ -436,10 +542,13 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
       <mesh geometry={architrave} material={trim} castShadow receiveShadow />
       {/* threshold strip */}
       <mesh position={[cx, 0.006, -WALL_T / 2]} material={paint('#c9b79c', 0.6)}><boxGeometry args={[ww, 0.012, WALL_T + 0.02]} /></mesh>
-      {/* leaf: panelled, with lever handles on both faces and three hinges */}
+      {/* leaf: panelled, with lever handles on both faces, three hinges and a dark top edge that reads from above */}
       <group position={[hingeX, 0, 0]} rotation={[0, leafRot, 0]}>
         <mesh position={[ww / 2, hh / 2 + 0.005, LEAF_T / 2]} material={leafPaint} castShadow receiveShadow>
           <boxGeometry args={[ww - 0.02, hh - 0.01, LEAF_T]} />
+        </mesh>
+        <mesh position={[ww / 2, hh - 0.003, LEAF_T / 2]} material={leafEdge}>
+          <boxGeometry args={[ww - 0.02, 0.008, LEAF_T + 0.004]} />
         </mesh>
         <mesh geometry={panels.frames} material={panelPaint} position={[0, 0, 0]} />
         <mesh geometry={panels.raised} material={leafPaint} castShadow receiveShadow />
@@ -455,29 +564,36 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
         ))}
         <mesh geometry={hinges} material={metal} />
       </group>
-      {/* hallway beyond the door: floor, walls, skirting, a soft light and (when walking) a ceiling */}
-      <group position={[cx, 0, 0]}>
-        <mesh position={[0, 0, -1.2]} rotation={[-Math.PI / 2, 0, 0]} material={paint('#7a5443', 0.85)} receiveShadow>
+      {/* hallway beyond the door: floor, walls, ceiling, skirting, a picture and its own light.
+          It is only drawn where the mask plane in the opening has stamped the stencil (see Outside
+          for the same trick; the group orders put the mask ahead of the hall). Nothing here casts
+          or receives the sun (its frustum edge would slice it); its own point light lights it day
+          and night. */}
+      <group ref={hallRef}>
+      <group renderOrder={MASK_ORDER}>
+        <MaskPlane x={cx} y={hh / 2} w={ww} h={hh} stencil={HALL_STENCIL} />
+      </group>
+      <group position={[cx, 0, 0]} renderOrder={WORLD_ORDER}>
+        <mesh position={[0, 0, -1.2]} rotation={[-Math.PI / 2, 0, 0]} material={hallMat('#7a5443', 0.85)}>
           <planeGeometry args={[3, 2.4]} />
         </mesh>
-        <mesh position={[0, H / 2, -2.4]} material={hall} receiveShadow>
+        <mesh position={[0, H / 2, -2.4]} material={hall}>
           <planeGeometry args={[3, H]} />
         </mesh>
         {[-1.5, 1.5].map((x) => (
-          <mesh key={x} position={[x, H / 2, -1.2]} rotation={[0, x < 0 ? Math.PI / 2 : -Math.PI / 2, 0]} material={hall} receiveShadow>
+          <mesh key={x} position={[x, H / 2, -1.2]} rotation={[0, x < 0 ? Math.PI / 2 : -Math.PI / 2, 0]} material={hall}>
             <planeGeometry args={[2.4, H]} />
           </mesh>
         ))}
-        <mesh position={[0, 0.05, -2.385]} material={trim}><boxGeometry args={[3, 0.1, 0.03]} /></mesh>
+        <mesh position={[0, H, -1.2]} rotation={[Math.PI / 2, 0, 0]} material={hallMat('#f3efe9', 1)}>
+          <planeGeometry args={[3, 2.4]} />
+        </mesh>
+        <mesh position={[0, 0.05, -2.385]} material={hallTrim}><boxGeometry args={[3, 0.1, 0.03]} /></mesh>
         {/* a small picture on the hall wall */}
-        <mesh position={[0.55, 1.5, -2.38]} material={paint('#3b3733', 0.6)}><boxGeometry args={[0.42, 0.34, 0.02]} /></mesh>
-        <mesh position={[0.55, 1.5, -2.368]} material={paint('#a9c1c8', 0.9)}><planeGeometry args={[0.36, 0.28]} /></mesh>
-        <pointLight position={[0, H - 0.4, -1.2]} intensity={daytime ? 0 : 2.2} color="#ffd9a8" distance={4.5} decay={2} />
-        {view === 'walk' && (
-          <mesh position={[0, H, -1.2]} rotation={[Math.PI / 2, 0, 0]} material={paint('#f3efe9', 1)}>
-            <planeGeometry args={[3, 2.4]} />
-          </mesh>
-        )}
+        <mesh position={[0.55, 1.5, -2.38]} material={hallMat('#3b3733', 0.6)}><boxGeometry args={[0.42, 0.34, 0.02]} /></mesh>
+        <mesh position={[0.55, 1.5, -2.368]} material={hallMat('#a9c1c8', 0.9)}><planeGeometry args={[0.36, 0.28]} /></mesh>
+        <pointLight position={[0, H - 0.4, -1.2]} intensity={daytime ? 1.6 : 2.2} color={daytime ? '#fff1dc' : '#ffd9a8'} distance={4.5} decay={2} />
+      </group>
       </group>
     </group>
   )
@@ -487,22 +603,29 @@ export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; da
 export function Stars({ room, side }: { room: Room; side: 'left' | 'right' }) {
   const ref = useRef<THREE.InstancedMesh>(null)
   const count = 26
-  const geo = useMemo(() => new THREE.ShapeGeometry(starShape(1), 2), [])
-  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), [])
+  const H = cm(room.h)
+  const wallColor = room.wallColors[side]
+  const geo = useDisposable(useMemo(() => new THREE.ShapeGeometry(starShape(1), 2), []))
+  const mat = useDisposable(useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6, transparent: true, opacity: 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), []))
   useLayoutEffect(() => {
     const m = ref.current
     if (!m) return
     const rnd = seeded(side === 'left' ? 7 : 13)
     const o = new THREE.Object3D()
+    const white = new THREE.Color('#ffffff'), wall = new THREE.Color(wallColor), c = new THREE.Color()
     for (let i = 0; i < count; i++) {
-      const r = 0.03 + rnd() * 0.05
-      o.position.set(0.3 + rnd() * (cm(room.d) - 0.6), 0.9 + rnd() * 1.4, 0.003)
+      const r = 0.022 + rnd() * 0.05
+      o.position.set(0.3 + rnd() * (cm(room.d) - 0.6), 0.7 + rnd() * Math.max(0.3, H - 1.0), 0.003)
       o.rotation.set(0, 0, rnd() * Math.PI)
       o.scale.set(r, r, 1)
       o.updateMatrix()
       m.setMatrixAt(i, o.matrix)
+      // painted on: each star is a different mix of white and the wall colour, not a grey sticker
+      c.copy(wall).lerp(white, 0.5 + rnd() * 0.5)
+      m.setColorAt(i, c)
     }
     m.instanceMatrix.needsUpdate = true
-  }, [room.d, side])
+    if (m.instanceColor) m.instanceColor.needsUpdate = true
+  }, [room.d, H, side, wallColor])
   return <instancedMesh ref={ref} args={[geo, mat, count]} />
 }
