@@ -62,6 +62,22 @@ export interface Radiator {
   height: number
 }
 
+export type ClosetDoors = 'none' | 'hinged' | 'bifold' | 'sliding'
+
+/** A recess in a wall behind an opening. Its front (the doors) sits on the wall line; the recess lies outside the room. */
+export interface Closet {
+  id: string
+  wall: Wall
+  /** distance along the wall from its left/top end to the opening's start */
+  offset: number
+  width: number
+  /** how far the recess goes back beyond the wall line */
+  depth: number
+  doors: ClosetDoors
+  /** height of the opening (default 203) */
+  height?: number
+}
+
 export interface Room {
   name: string
   subtitle: string
@@ -71,6 +87,7 @@ export interface Room {
   windows: Opening[]
   doors: Door[]
   radiators: Radiator[]
+  closets: Closet[]
   wallColors: { left: string; right: string; top: string; bottom: string }
   floorColor: string
 }

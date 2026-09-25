@@ -1,5 +1,5 @@
 import { runChecks } from './checks'
-import { doorSwing, footprint, gapBetween, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
+import { closetClearance, doorSwing, footprint, gapBetween, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
 import type { Check, Item, ItemKind, ItemPlacement, Layout, Rect, Room, Rot, Wall } from './types'
 
 /**
@@ -71,6 +71,8 @@ interface Ctx {
   radiators: Rect[]
   /** strips 1 m deep in front of each door: keep them fairly clear */
   approaches: Rect[]
+  /** the floor closet doors need to open: nothing may stand there */
+  closets: Rect[]
   doorWalls: Set<Wall>
   budget: number
 }
@@ -180,6 +182,7 @@ function makeCtx(room: Room): Ctx {
       .map((w) => ({ rect: wallStripRect(room, w.wall, w.offset, w.width, WINDOW_DEPTH), sill: w.sill, height: w.height, wall: w.wall, offset: w.offset, width: w.width })),
     radiators: room.radiators.filter((r) => r.width > 0).map((r) => wallStripRect(room, r.wall, r.offset, r.width, r.depth + RADIATOR_CLEAR)),
     approaches: room.doors.map((d) => wallStripRect(room, d.wall, Math.max(0, d.offset - PATH), d.width + 2 * PATH, 100)),
+    closets: (room.closets ?? []).map((c) => closetClearance(room, c).rect),
     doorWalls: new Set(room.doors.map((d) => d.wall)),
     budget: BUDGET,
   }
@@ -358,6 +361,7 @@ function evaluate(ctx: Ctx, arr: Arrangement, item: Item, spot: Spot, ignore?: I
   if (!insideRoom(room, rect)) return -Infinity
   for (const s of arr.solids) if (s.item !== ignore && intersects(rect, s.rect)) return -Infinity
   if (doorBlocks(room, rect)) return -Infinity
+  for (const c of ctx.closets) if (intersects(rect, c)) return -Infinity
 
   let score = 0
   const touched = wallsTouched(room, rect)
@@ -486,8 +490,8 @@ function rugSpot(ctx: Ctx, arr: Arrangement, rug: Item): Spot | null {
   const blocked = arr.solids.map((s) => s.rect)
   for (const p of arr.placed.values()) if (isRugKind(p.kind)) blocked.push(rectOf(p))
   const occ = new Occupancy(room, blocked)
-  // a rug under the door leaf is only mildly annoying, so it counts for a third
-  const swing = new Occupancy(room, room.doors.map((d) => wallStripRect(room, d.wall, d.offset, d.width, Math.min(d.width, 90))))
+  // a rug under the door leaf or the closet doors is only mildly annoying, so it counts for a third
+  const swing = new Occupancy(room, [...room.doors.map((d) => wallStripRect(room, d.wall, d.offset, d.width, Math.min(d.width, 90))), ...ctx.closets])
   // centroid of the free floor
   let fx = 0, fy = 0, free = 0
   for (let j = 0; j < occ.ny; j++) for (let i = 0; i < occ.nx; i++) {
@@ -722,7 +726,7 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
       }
       for (const v of variants) {
         const r = spotRect(anchor, v)
-        if (!insideRoom(room, r) || doorBlocks(room, r)) continue
+        if (!insideRoom(room, r) || doorBlocks(room, r) || ctx.closets.some((c) => intersects(r, c))) continue
         const arr = buildArrangement(ctx, anchor, v, rest, rugs)
         const all = items.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
         results.push(scoreArrangement(ctx, anchor, all, order++))

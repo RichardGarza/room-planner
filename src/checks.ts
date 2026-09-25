@@ -1,4 +1,4 @@
-import { doorClearanceFor, doorwayRect, gapBetween, intersects, isRugKind, overlapArea, rectOf, wallStripRect } from './geometry'
+import { closetClearance, closetLabel, doorClearanceFor, doorwayRect, gapBetween, intersects, isRugKind, overlapArea, rectOf, wallStripRect } from './geometry'
 import type { Check, Item, Rect, Room, Wall } from './types'
 
 const MIN_PASSAGE = 60
@@ -192,7 +192,17 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     }
   }
 
-  // 7. Things kept in place (nice-to-know ok lines)
+  // 7. Closets: the doors need room to open (or you need room to reach in)
+  const closets = room.closets ?? []
+  closets.forEach((closet, i) => {
+    const label = closetLabel(i, closets.length)
+    const clear = closetClearance(room, closet)
+    for (const it of solid) {
+      if (intersects(rectOf(it), clear.rect)) checks.push({ level: clear.level, text: clear.text(it.name, label), itemIds: [it.id] })
+    }
+  })
+
+  // 8. Things kept in place (nice-to-know ok lines)
   const stayed = solid.filter((i) => ['dresser', 'desk', 'shelf'].includes(i.kind))
   if (stayed.length === 3) checks.push({ level: 'ok', text: 'Dresser, desk and shelf stay in place', itemIds: stayed.map((i) => i.id) })
 

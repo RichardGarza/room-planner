@@ -8,7 +8,8 @@ const SEED_TIME = '2026-09-24T12:00:00.000Z'
 
 /**
  * Forest's Room — a nursery measured in inches with a tape:
- * room 141 × 116, ceiling 96; window 60 wide, 36 tall, sill 44; door 32 wide.
+ * room 141 × 116, ceiling 96; window 60 wide, 36 tall, sill 44; door 32 wide;
+ * a bi-fold closet on the right wall, 58 from the back wall, 24 deep, running to the front corner.
  * Everything is stored in cm (the app's unit) and shown in inches when that unit is selected.
  */
 export function forestsRoom(): RoomDoc {
@@ -26,6 +27,8 @@ export function forestsRoom(): RoomDoc {
     // door in the front-left corner; hinge on the corner side so it swings left as you walk in
     doors: [{ id: 'd1', wall: 'bottom', offset: 10, width: doorW, height: inch(80), sill: 0, hinge: 'left', swing: 'in' }],
     radiators: [],
+    // the closet was measured 60 wide, but 58 + 60 overshoots the 116 in wall: it runs to the front corner
+    closets: [{ id: 'c1', wall: 'right', offset: inch(58), width: Math.min(inch(60), D - inch(58)), depth: inch(24), doors: 'bifold' }],
     wallColors: { left: '#d8e2d3', right: '#d8e2d3', top: '#f3efe8', bottom: '#f3efe8' },
     floorColor: '#b08968',
   }
@@ -73,7 +76,8 @@ export function forestsRoom(): RoomDoc {
       note: '41 × 39 × 40 in. Reclines to 64 in deep (38 in closed).',
     }),
     piece('forest-side', 'Side table', 'nightstand', 22, 18, 25, 100 + inch(41) + 10 + inch(22) / 2, D - inch(18) / 2, 0, '#c9a27e'),
-    piece('forest-hamper', 'Hamper', 'box', 13, 22, 24, 100 + inch(41) + 10 + inch(22) + 10 + inch(13) / 2, D - inch(22) / 2, 0, '#e5e0d8'),
+    // hamper squeezed between the side table and the closet doors' clearance
+    piece('forest-hamper', 'Hamper', 'box', 13, 22, 24, 100 + inch(41) + 10 + inch(22) + 2 + inch(13) / 2, D - inch(22) / 2, 0, '#e5e0d8'),
     // the same recliner fully reclined, kept out of the room to test clearance
     piece('forest-recliner-open', 'Recliner, reclined', 'sofa', 41, 64, 40, 60, D + 90, 0, '#9aa88f', {
       inRoom: false,
@@ -85,7 +89,7 @@ export function forestsRoom(): RoomDoc {
     id: 'room-forest',
     name: "Forest's Room",
     group: 'Home',
-    notes: 'Nursery. Sizes measured in inches; the window is centred on the back wall and the door is in the front-left corner and swings left as you walk in. Move anything that does not match the real room.',
+    notes: 'Nursery. Sizes measured in inches; the window is centred on the back wall, the door is in the front-left corner and swings left as you walk in, and the bi-fold closet is on the right wall by the front corner (set its doors to "No doors" to test the room without them). Move anything that does not match the real room.',
     createdAt: SEED_TIME,
     updatedAt: SEED_TIME,
     room,

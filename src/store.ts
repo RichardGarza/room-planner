@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
-import { clamp, footprint, wallLength } from './geometry'
+import { CLOSET_HEIGHT, clamp, footprint, frontRecessPad, wallLength } from './geometry'
 import { migrateRoom, nextOpeningId } from './migrate'
 import { suggestLayouts } from './suggest'
-import type { Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
+import type { Closet, Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
 
 export type ViewMode = 'outside' | 'walk'
 export type OutsideAngle = 'corner' | 'above' | 'window' | 'door'
@@ -11,9 +11,9 @@ export type WalkPreset = 'door' | 'window'
 
 export interface WalkPose { x: number; y: number; yaw: number; pitch: number }
 
-export type OpeningKind = 'window' | 'door' | 'radiator'
-type OpeningOf<K extends OpeningKind> = K extends 'window' ? Opening : K extends 'door' ? Door : Radiator
-const LIST_KEY = { window: 'windows', door: 'doors', radiator: 'radiators' } as const
+export type OpeningKind = 'window' | 'door' | 'radiator' | 'closet'
+type OpeningOf<K extends OpeningKind> = K extends 'window' ? Opening : K extends 'door' ? Door : K extends 'radiator' ? Radiator : Closet
+const LIST_KEY = { window: 'windows', door: 'doors', radiator: 'radiators', closet: 'closets' } as const
 
 interface Settings {
   daytime: boolean
@@ -64,7 +64,7 @@ interface State extends Settings {
   removeItem: (id: string) => void
   toggleInRoom: (id: string) => void
   setRoom: (patch: Partial<Room>) => void
-  /** Adds a window / door / radiator with sensible defaults on a wall with free space; returns its id. */
+  /** Adds a window / door / radiator / closet with sensible defaults on a wall with free space; returns its id. */
   addOpening: (kind: OpeningKind) => string
   updateOpening: <K extends OpeningKind>(kind: K, id: string, patch: Partial<OpeningOf<K>>) => void
   removeOpening: (kind: OpeningKind, id: string) => void
@@ -91,17 +91,18 @@ function applyPlacements(items: Item[], placements: Record<string, ItemPlacement
   return items.map((it) => (placements[it.id] ? { ...it, ...placements[it.id] } : it))
 }
 
-/** Items that are out of the room sit in a parking strip below the plan. */
+/** Items that are out of the room sit in a parking strip below the plan (pushed down past a front-wall closet). */
 export const PARK_Y = 90
 export function park(room: Room, items: Item[]): Item[] {
   let slot = 0
+  const pad = frontRecessPad(room)
   return items.map((it) => {
     if (it.inRoom) return it
-    if (it.y > room.d + 15) return it
+    if (it.y > room.d + 15 + pad) return it
     const { fw } = footprint(it)
     const x = 20 + slot * 70 + fw / 2
     slot += 1
-    return { ...it, x, y: room.d + PARK_Y }
+    return { ...it, x, y: room.d + PARK_Y + pad }
   })
 }
 
@@ -142,7 +143,13 @@ export function sanitizeRoom(room: Room): Room {
     const rad = fixOpening(o, 20)
     return { ...rad, depth: clamp(Math.round(rad.depth), 4, 40), height: clamp(Math.round(rad.height), 20, h - 10) }
   })
-  return { ...r, windows, doors, radiators }
+  const closets = (r.closets ?? []).map((o) => {
+    const closet = fixOpening(o, 40)
+    const out: Closet = { ...closet, depth: clamp(Math.round(closet.depth), 30, 120) }
+    if (out.height !== undefined) out.height = clamp(Math.round(out.height), 100, h - 5)
+    return out
+  })
+  return { ...r, windows, doors, radiators, closets }
 }
 
 /* ---------- placing new openings ---------- */
@@ -151,16 +158,19 @@ const NEW_OPENING = {
   window: { width: 100, height: 120, sill: 90 },
   door: { width: 80, height: 205 },
   radiator: { width: 80, depth: 10, height: 60 },
+  closet: { width: 150, depth: 60 },
 } as const
 
 /** Everything already occupying a wall, as spans along it. Radiators may sit under windows. */
 function occupied(room: Room, wall: Wall, kind: OpeningKind): { offset: number; width: number }[] {
-  const list: { wall: Wall; offset: number; width: number }[] = kind === 'radiator' ? [...room.doors, ...room.radiators] : [...room.windows, ...room.doors, ...room.radiators]
+  const closets = room.closets ?? []
+  const list: { wall: Wall; offset: number; width: number }[] =
+    kind === 'radiator' ? [...room.doors, ...room.radiators, ...closets] : [...room.windows, ...room.doors, ...room.radiators, ...closets]
   return list.filter((o) => o.wall === wall).sort((a, b) => a.offset - b.offset)
 }
 
-/** Centre of the widest free stretch on a wall that fits `width` (+ margins), or null. */
-function freeSpot(room: Room, wall: Wall, kind: OpeningKind, width: number): number | null {
+/** The widest free stretch on a wall, or null when nothing fits `width` (+ margins). */
+function freeRun(room: Room, wall: Wall, kind: OpeningKind, width: number): { start: number; size: number } | null {
   const len = wallLength(room, wall)
   const margin = 10
   let cursor = 0
@@ -174,12 +184,41 @@ function freeSpot(room: Room, wall: Wall, kind: OpeningKind, width: number): num
     cursor = Math.max(cursor, o.offset + o.width)
   }
   consider(cursor, len)
-  if (!best) return null
-  const b: { start: number; size: number } = best
-  return Math.round(b.start + (b.size - width) / 2)
+  return best
 }
 
-function makeOpening(room: Room, kind: OpeningKind): Opening | Door | Radiator {
+/** Centre of the widest free stretch on a wall that fits `width` (+ margins), or null. */
+function freeSpot(room: Room, wall: Wall, kind: OpeningKind, width: number): number | null {
+  const b = freeRun(room, wall, kind, width)
+  return b ? Math.round(b.start + (b.size - width) / 2) : null
+}
+
+const OPPOSITE: Record<Wall, Wall> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }
+
+/** A closet goes on the wall with the longest free run, opposite the door wall when that one has room. */
+function closetSpot(room: Room): { wall: Wall; offset: number; width: number } {
+  const walls: Wall[] = ['right', 'left', 'top', 'bottom']
+  const opposite = room.doors[0] ? OPPOSITE[room.doors[0].wall] : null
+  for (const width of [NEW_OPENING.closet.width, 120, 90, 60]) {
+    if (opposite) {
+      const run = freeRun(room, opposite, 'closet', width)
+      if (run) return { wall: opposite, offset: Math.round(run.start + (run.size - width) / 2), width }
+    }
+    let best: { wall: Wall; run: { start: number; size: number } } | null = null
+    for (const wall of walls) {
+      const run = freeRun(room, wall, 'closet', width)
+      if (run && (!best || run.size > best.run.size)) best = { wall, run }
+    }
+    if (best) return { wall: best.wall, offset: Math.round(best.run.start + (best.run.size - width) / 2), width }
+  }
+  return { wall: opposite ?? 'right', offset: 0, width: 60 }
+}
+
+function makeOpening(room: Room, kind: OpeningKind): Opening | Door | Radiator | Closet {
+  if (kind === 'closet') {
+    const { wall, offset, width } = closetSpot(room)
+    return { id: nextOpeningId('c', room.closets ?? []), wall, offset, width, depth: NEW_OPENING.closet.depth, doors: 'bifold', height: CLOSET_HEIGHT }
+  }
   const preferred: Wall[] = kind === 'door' ? ['bottom', 'left', 'right', 'top'] : ['top', 'left', 'right', 'bottom']
   const width = NEW_OPENING[kind].width
   let wall = preferred[0]
@@ -277,7 +316,8 @@ export const useStore = create<State>((set, get) => ({
       const it = s.items.find((i) => i.id === id)
       if (!it) return s
       const inRoom = y <= s.room.d + 15
-      const pos = inRoom ? clampToRoom(s.room, it, x, y) : { x: clamp(x, 0, s.room.w), y: clamp(y, s.room.d + 30, s.room.d + 150) }
+      const pad = frontRecessPad(s.room)
+      const pos = inRoom ? clampToRoom(s.room, it, x, y) : { x: clamp(x, 0, s.room.w), y: clamp(y, s.room.d + 30 + pad, s.room.d + 150 + pad) }
       const items = s.items.map((i) => (i.id === id ? { ...i, inRoom, x: Math.round(pos.x), y: Math.round(pos.y) } : i))
       return { items, activeLayoutId: null }
     }),
@@ -355,7 +395,7 @@ export const useStore = create<State>((set, get) => ({
     const s = get()
     const opening = makeOpening(s.room, kind)
     const key = LIST_KEY[kind]
-    const list = [...(s.room[key] as { id: string }[]), opening]
+    const list = [...((s.room[key] ?? []) as { id: string }[]), opening]
     s.setRoom({ [key]: list } as Partial<Room>)
     return opening.id
   },
@@ -363,14 +403,14 @@ export const useStore = create<State>((set, get) => ({
   updateOpening: (kind, id, patch) => {
     const s = get()
     const key = LIST_KEY[kind]
-    const list = (s.room[key] as { id: string }[]).map((o) => (o.id === id ? { ...o, ...patch } : o))
+    const list = ((s.room[key] ?? []) as { id: string }[]).map((o) => (o.id === id ? { ...o, ...patch } : o))
     s.setRoom({ [key]: list } as Partial<Room>)
   },
 
   removeOpening: (kind, id) => {
     const s = get()
     const key = LIST_KEY[kind]
-    const list = (s.room[key] as { id: string }[]).filter((o) => o.id !== id)
+    const list = ((s.room[key] ?? []) as { id: string }[]).filter((o) => o.id !== id)
     s.setRoom({ [key]: list } as Partial<Room>)
   },
 

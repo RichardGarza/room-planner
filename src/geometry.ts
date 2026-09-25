@@ -1,4 +1,4 @@
-import type { Door, Item, ItemKind, Rect, Room, Wall } from './types'
+import type { CheckLevel, Closet, Door, Item, ItemKind, Rect, Room, Wall } from './types'
 
 /** Rugs are walked over and lie under other furniture, so they never collide. */
 export function isRugKind(kind: ItemKind) {
@@ -141,6 +141,74 @@ export function doorClearance(room: Room, items: Item[]) {
     if (c.maxAngle < result.maxAngle) result = { ...c, door }
   }
   return result
+}
+
+/* ---------- closets ---------- */
+
+/** Default height of a closet opening (cm). */
+export const CLOSET_HEIGHT = 203
+
+/** The closet opening as a strip on the wall line, projected `depth` cm into the room (0 = the line itself). */
+export function closetOpeningRect(room: Room, closet: Closet, depth = 0): Rect {
+  return wallStripRect(room, closet.wall, closet.offset, closet.width, depth)
+}
+
+/** The recess itself: the closet's depth beyond the wall line, outside the room. */
+export function closetRecessRect(room: Room, closet: Closet): Rect {
+  const { normal } = wallAxes(closet.wall)
+  const strip = closetOpeningRect(room, closet, 0)
+  const dx = -normal[0] * closet.depth, dy = -normal[1] * closet.depth
+  return {
+    x0: Math.min(strip.x0, strip.x0 + dx), y0: Math.min(strip.y0, strip.y0 + dy),
+    x1: Math.max(strip.x1, strip.x1 + dx), y1: Math.max(strip.y1, strip.y1 + dy),
+  }
+}
+
+/** How deep the floor in front of a closet must stay free for its doors to work (or for you to reach in). */
+export function closetClearanceDepth(closet: Closet): number {
+  switch (closet.doors) {
+    case 'hinged': return Math.round(closet.width / 2 + 10)
+    case 'bifold': return Math.round(closet.width / 4 + 15)
+    case 'sliding': return 40
+    case 'none': return 40
+  }
+}
+
+export interface ClosetClearance {
+  /** the floor area inside the room that should stay free */
+  rect: Rect
+  /** hinged and bi-fold doors cannot open at all when blocked; a sliding or open closet is only awkward */
+  level: Exclude<CheckLevel, 'ok'>
+  /** the check text for an item standing in the rect; `label` is "the closet" or "closet 2" */
+  text: (itemName: string, label?: string) => string
+}
+
+/**
+ * The area in front of a closet that must stay free, and the check it raises when something stands there:
+ * no doors → 40 cm (warn: you can still reach in), sliding → 40 cm (warn), bi-fold → width/4 + 15 cm (bad),
+ * hinged → width/2 + 10 cm, two leaves each half the width swinging into the room (bad).
+ */
+export function closetClearance(room: Room, closet: Closet): ClosetClearance {
+  const rect = closetOpeningRect(room, closet, closetClearanceDepth(closet))
+  const blocksDoors = closet.doors === 'hinged' || closet.doors === 'bifold'
+  return {
+    rect,
+    level: blocksDoors ? 'bad' : 'warn',
+    text: (itemName, label = 'the closet') => (blocksDoors ? `${itemName} blocks ${label === 'the closet' ? 'the closet doors' : `the doors of ${label}`}` : `${itemName} is in front of ${label}`),
+  }
+}
+
+/**
+ * How far the plan's parking strip has to move down to clear a closet recess on the front wall
+ * (the strip normally starts 30 cm below the room, with 10 cm to spare beyond the recess).
+ */
+export function frontRecessPad(room: Room): number {
+  return Math.max(0, ...(room.closets ?? []).filter((c) => c.wall === 'bottom').map((c) => c.depth + 10 - 30))
+}
+
+/** "the closet" with one, "closet 2" with several (1-based). */
+export function closetLabel(i: number, count: number) {
+  return count > 1 ? `closet ${i + 1}` : 'the closet'
 }
 
 export function wallLabel(w: Wall) {
