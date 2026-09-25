@@ -16,8 +16,9 @@ import { AUTOSAVE_MS, SEEDED_KEY, roomOpenings, timeAgo, useLibrary } from '../l
 import { useStore } from '../store'
 import { summarize, type RoomStorage } from '../storage/types'
 import { DOC_VERSION } from '../migrate'
-import { defaultRoom } from '../data'
-import type { RoomDoc } from '../types'
+import { defaultRoom, presetLayouts } from '../data'
+import { intersects, rectOf } from '../geometry'
+import type { Item, Room, RoomDoc } from '../types'
 
 /** In-memory RoomStorage with hooks for export/import. */
 class FakeStorage implements RoomStorage {
@@ -71,7 +72,7 @@ describe('library', () => {
 
   it('create() adds a room and opens it in the planner', async () => {
     await useLibrary.getState().refresh()
-    const id = await useLibrary.getState().create({ name: 'Study', group: 'Home', w: 320, d: 410 })
+    const id = await useLibrary.getState().create({ name: 'Study', group: 'Home', w: 320, d: 410, start: 'empty' })
     const lib = useLibrary.getState()
     expect(lib.currentId).toBe(id)
     expect(lib.status).toBe('saved')
@@ -232,6 +233,84 @@ describe('library', () => {
     storage.nextImport = { nothing: true }
     expect(await useLibrary.getState().importDoc()).toBeNull()
     expect(useLibrary.getState().error).toMatch(/not a Room Planner room/)
+  })
+})
+
+describe('what a new room starts with', () => {
+  const inside = (room: Room, it: Item) => {
+    const r = rectOf(it)
+    return r.x0 >= 0 && r.y0 >= 0 && r.x1 <= room.w && r.y1 <= room.d
+  }
+  const overlapping = (items: Item[]) =>
+    items.some((a, i) => items.slice(i + 1).some((b) => intersects(rectOf(a), rectOf(b))))
+
+  it('"basics" adds a bed, a dresser, a desk and a rug that fit', async () => {
+    await useLibrary.getState().refresh()
+    const id = await useLibrary.getState().create({ name: 'Nursery', start: 'basics' })
+    const { room, items, savedLayouts } = useStore.getState()
+    expect(room.w).toBe(300)
+    expect(room.d).toBe(400)
+    expect(room.windows).toHaveLength(1)
+    expect(room.doors).toHaveLength(1)
+    expect(items.map((i) => i.id)).toEqual(['item-bed-1', 'item-dresser-1', 'item-desk-1', 'item-rug-1'])
+    expect(items.map((i) => i.kind)).toEqual(['bed', 'dresser', 'desk', 'rug'])
+    expect(items.map((i) => i.name)).toEqual(['Double bed 140×200', 'Wide dresser, 6 drawers', 'Small desk', 'Round rug Ø160'])
+    expect(items.every((i) => i.inRoom)).toBe(true)
+    expect(items.every((i) => inside(room, i))).toBe(true)
+    expect(overlapping(items)).toBe(false)
+    // catalogue colour and note come along
+    expect(items[0].color).toBe('#efe9df')
+    expect(items[0].note).toMatch(/140×200/)
+    // fresh ids: the example room's preset layouts (and their tabs) never apply here
+    expect(items.some((i) => i.id in presetLayouts[0].placements)).toBe(false)
+    expect(savedLayouts).toEqual([])
+    expect(storage.docs.get(id)!.items).toHaveLength(4)
+    expect(useLibrary.getState().rooms.find((r) => r.id === id)!.itemCount).toBe(4)
+  })
+
+  it('is the default, and picks the smaller rug in a narrow room', async () => {
+    await useLibrary.getState().refresh()
+    await useLibrary.getState().create({ name: 'Box room', w: 240, d: 400 })
+    const { room, items } = useStore.getState()
+    expect(room.w).toBe(240)
+    expect(items).toHaveLength(4)
+    expect(items.find((i) => i.kind === 'rug')!.name).toBe('Round rug Ø120')
+    expect(items.every((i) => inside(room, i))).toBe(true)
+    expect(overlapping(items)).toBe(false)
+  })
+
+  it('leaves out what does not fit in a tiny room, without overlaps', async () => {
+    await useLibrary.getState().refresh()
+    await useLibrary.getState().create({ name: 'Cupboard', w: 160, d: 200, start: 'basics' })
+    const { room, items } = useStore.getState()
+    expect(items.length).toBeGreaterThan(0)
+    expect(items.length).toBeLessThan(4)
+    expect(items.every((i) => inside(room, i))).toBe(true)
+    expect(overlapping(items)).toBe(false)
+  })
+
+  it('"empty" adds nothing', async () => {
+    await useLibrary.getState().refresh()
+    await useLibrary.getState().create({ name: 'Bare', start: 'empty' })
+    expect(useStore.getState().items).toEqual([])
+    expect(useStore.getState().room.windows).toHaveLength(1)
+  })
+
+  it('"example" copies the example room (fromExample still works)', async () => {
+    await useLibrary.getState().refresh()
+    const id = await useLibrary.getState().create({ name: 'Second try', group: 'Ideas', w: 500, start: 'example' })
+    let st = useStore.getState()
+    expect(st.room.name).toBe('Second try')
+    expect(st.room.w).toBe(defaultRoom.w)
+    expect(st.items).toHaveLength(8)
+    expect(st.activeLayoutId).toBe('A')
+    expect(st.savedLayouts.map((l) => l.id)).toEqual(['A', 'B', 'C', 'now'])
+    expect(storage.docs.get(id)!.group).toBe('Ideas')
+
+    await useLibrary.getState().create({ name: 'Old style', fromExample: true })
+    st = useStore.getState()
+    expect(st.items).toHaveLength(8)
+    expect(st.room.name).toBe('Old style')
   })
 })
 

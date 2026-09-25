@@ -1,6 +1,6 @@
 // Walk through the running app in headless Chromium and save screenshots.
 // Usage: node scripts/shots.mjs [baseUrl] [outDir]
-// Env: WALK=1 to also capture walk mode and evening lighting.
+// Env: WALK=1 to also capture walk mode and evening lighting; NARROW=1 to end with a 1100 px wide window.
 import { mkdirSync } from 'node:fs'
 import { chromium } from 'playwright'
 
@@ -20,6 +20,16 @@ await page.goto(base, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1200)
 await shot('01-library')
 
+await step('new room panel', async () => {
+  await page.getByRole('button', { name: /Start a new room/ }).click({ timeout: 4000 })
+  await page.waitForTimeout(400)
+})
+await shot('01b-new-room')
+await step('close new room panel', async () => {
+  await page.getByRole('button', { name: 'Cancel' }).click({ timeout: 3000 })
+  await page.waitForTimeout(300)
+})
+
 await step('open first room', async () => {
   const card = page.locator('[class*="card"]').filter({ hasText: /cm/ }).first()
   await card.click({ timeout: 4000 })
@@ -38,6 +48,12 @@ await step('door side view', async () => { await page.getByRole('button', { name
 await page.waitForTimeout(1500)
 await shot('04-door-side')
 
+await step('focus 2D', async () => { await page.getByRole('button', { name: 'Focus 2D' }).click({ timeout: 3000 }) })
+await page.waitForTimeout(900)
+await shot('08-focus-2d')
+await step('focus 3D', async () => { await page.getByRole('button', { name: 'Focus 3D' }).click({ timeout: 3000 }) })
+await page.waitForTimeout(600)
+
 if (process.env.WALK) {
   await step('walk', async () => { await page.getByRole('button', { name: /Walk through/ }).click({ timeout: 3000 }) })
   await page.waitForTimeout(1500)
@@ -47,7 +63,7 @@ if (process.env.WALK) {
   await shot('06-evening')
   await step('outside again', async () => {
     await page.getByRole('button', { name: /View from outside/ }).click({ timeout: 3000 })
-    await page.getByRole('button', { name: /Day/ }).click({ timeout: 3000 })
+    await page.getByRole('button', { name: /Day$/ }).click({ timeout: 3000 })
   })
 }
 
@@ -57,5 +73,11 @@ await step('open room card', async () => {
 })
 await page.waitForTimeout(600)
 await shot('07-room-card')
+
+if (process.env.NARROW) {
+  await step('narrow window', async () => { await page.setViewportSize({ width: 1100, height: 760 }) })
+  await page.waitForTimeout(900)
+  await shot('09-narrow')
+}
 
 await browser.close()

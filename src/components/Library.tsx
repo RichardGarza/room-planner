@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getStorage } from '../storage'
-import { timeAgo, useLibrary } from '../library'
+import { timeAgo, useLibrary, type StartWith } from '../library'
 import { migrateDoc } from '../migrate'
 import type { Item, Room, RoomDoc, RoomSummary } from '../types'
 import { PlanThumb } from './PlanThumb'
 
 const NO_GROUP = 'No group'
+/** how long the saved-room cards glow after "Open an existing room" */
+const FLASH_MS = 1600
 
-/** Home screen: every saved room, grouped, with a thumbnail and a small menu. */
+/** Home screen: two big ways in (new room / existing room), then every saved room, grouped. */
 export function Library() {
   const rooms = useLibrary((s) => s.rooms)
   const groups = useLibrary((s) => s.groups)
@@ -17,6 +19,11 @@ export function Library() {
   const importDoc = useLibrary((s) => s.importDoc)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
+  const [flash, setFlash] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current) }, [])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -40,6 +47,27 @@ export function Library() {
 
   const loading = status === 'loading' && rooms.length === 0
 
+  /** "Open an existing room": show the list, glow the cards for a moment, focus the first one. */
+  const showExisting = () => {
+    setCreating(false)
+    setQuery('')
+    setFlash(true)
+    if (flashTimer.current) clearTimeout(flashTimer.current)
+    flashTimer.current = setTimeout(() => setFlash(false), FLASH_MS)
+    requestAnimationFrame(() => {
+      const list = listRef.current
+      if (!list) return
+      list.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      list.querySelector<HTMLElement>('.lib-card')?.focus({ preventScroll: true })
+    })
+  }
+
+  const existingHint = loading
+    ? 'Loading your rooms…'
+    : rooms.length === 0
+      ? 'Nothing saved yet — import a JSON file or start a new room'
+      : `${rooms.length} saved room${rooms.length === 1 ? '' : 's'} · pick up where you left off`
+
   return (
     <div className="library">
       <header className="lib-head">
@@ -50,19 +78,24 @@ export function Library() {
             <p className="muted">Rooms are saved in {location || '…'}</p>
           </div>
         </div>
-        <div className="lib-tools">
-          <input
-            className="text lib-search"
-            type="search"
-            placeholder="Search rooms or groups"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search rooms"
-          />
-          <button className="chip ghost" onClick={() => void importDoc()}>Import JSON</button>
-          <button className="chip solid pink-btn" onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : '+ New room'}</button>
-        </div>
       </header>
+
+      <div className="lib-start" role="group" aria-label="Start">
+        <button type="button" className={creating ? 'lib-action on' : 'lib-action'} aria-expanded={creating} onClick={() => setCreating(true)}>
+          <span className="lib-action-icon" aria-hidden="true"><PlusIcon /></span>
+          <span className="lib-action-text">
+            <strong>Start a new room</strong>
+            <span>Measure it, pick what it starts with, then try layouts in 2D and 3D.</span>
+          </span>
+        </button>
+        <button type="button" className="lib-action" onClick={showExisting}>
+          <span className="lib-action-icon" aria-hidden="true"><RoomIcon /></span>
+          <span className="lib-action-text">
+            <strong>Open an existing room</strong>
+            <span>{existingHint}</span>
+          </span>
+        </button>
+      </div>
 
       {creating && <NewRoomPanel groups={groups} onDone={() => setCreating(false)} />}
 
@@ -73,36 +106,78 @@ export function Library() {
         </div>
       )}
 
-      {loading ? (
-        <p className="lib-empty muted">Loading your rooms…</p>
-      ) : rooms.length === 0 ? (
-        <div className="lib-empty">
-          <h2>No rooms yet</h2>
-          <p className="muted">
-            A room is a real space you want to furnish: measure it, add its windows and doors, then try layouts in 2D and 3D.
-            Everything you change is saved automatically, so you can come back to it when you renovate.
-          </p>
-          <button className="chip solid pink-btn" onClick={() => setCreating(true)}>Create your first room</button>
+      <div ref={listRef} className={flash ? 'lib-rooms flash' : 'lib-rooms'}>
+        <div className="lib-rooms-head">
+          <h2>Your rooms</h2>
+          <div className="lib-tools">
+            <input
+              className="text lib-search"
+              type="search"
+              placeholder="Search rooms or groups"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search rooms"
+            />
+            <button className="chip ghost" onClick={() => void importDoc()}>Import JSON</button>
+          </div>
         </div>
-      ) : filtered.length === 0 ? (
-        <p className="lib-empty muted">Nothing matches “{query}”.</p>
-      ) : (
-        sections.map((sec) => (
-          <section key={sec.name} className="lib-group">
-            <h4>
-              {sec.name} <span className="count">{sec.rooms.length}</span>
-            </h4>
-            <div className="lib-grid">
-              {sec.rooms.map((r) => <RoomCard key={r.id} summary={r} groups={groups} />)}
-            </div>
-          </section>
-        ))
-      )}
+
+        {loading ? (
+          <p className="lib-empty muted">Loading your rooms…</p>
+        ) : rooms.length === 0 ? (
+          <div className="lib-empty">
+            <h2>No rooms yet</h2>
+            <p className="muted">
+              A room is a real space you want to furnish: measure it, add its windows and doors, then try layouts in 2D and 3D.
+              Everything you change is saved automatically, so you can come back to it when you renovate.
+            </p>
+            <button className="chip solid pink-btn" onClick={() => setCreating(true)}>Create your first room</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <p className="lib-empty muted">Nothing matches “{query}”.</p>
+        ) : (
+          sections.map((sec) => (
+            <section key={sec.name} className="lib-group">
+              <h4>
+                {sec.name} <span className="count">{sec.rooms.length}</span>
+              </h4>
+              <div className="lib-grid">
+                {sec.rooms.map((r) => <RoomCard key={r.id} summary={r} groups={groups} />)}
+              </div>
+            </section>
+          ))
+        )}
+      </div>
     </div>
   )
 }
 
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+/** A little floor plan: four walls with a door standing open in the bottom one. */
+function RoomIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
+      <path d="M9 20v-6" />
+      <path d="M9 14a6 6 0 0 1 6 6" strokeDasharray="1.5 2.2" />
+    </svg>
+  )
+}
+
 /* ---------- new room ---------- */
+
+const STARTS: { id: StartWith; title: string; hint: string }[] = [
+  { id: 'basics', title: 'The basics', hint: 'door, window, bed, dresser, rug and desk — placed for you' },
+  { id: 'empty', title: 'Empty room', hint: 'just the walls, with a window and a door' },
+  { id: 'example', title: 'A copy of the example room', hint: "Mila's room with its furniture and layouts" },
+]
 
 function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void }) {
   const create = useLibrary((s) => s.create)
@@ -111,15 +186,17 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
   const [w, setW] = useState(300)
   const [d, setD] = useState(400)
   const [h, setH] = useState(260)
-  const [fromExample, setFromExample] = useState(false)
+  const [start, setStart] = useState<StartWith>('basics')
   const [busy, setBusy] = useState(false)
   const valid = name.trim().length > 0
+  // the example room brings its own size
+  const fixed = start === 'example'
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!valid || busy) return
     setBusy(true)
-    await create({ name, group, w, d, h, fromExample })
+    await create({ name, group, w, d, h, start })
     setBusy(false)
     onDone()
   }
@@ -140,17 +217,27 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
           </datalist>
         </label>
         <div className="dims-grid">
-          <label>Width (cm)<input type="number" min={150} max={1200} value={w} disabled={fromExample} onChange={(e) => setW(Number(e.target.value))} /></label>
-          <label>Depth (cm)<input type="number" min={150} max={1200} value={d} disabled={fromExample} onChange={(e) => setD(Number(e.target.value))} /></label>
-          <label>Height (cm)<input type="number" min={200} max={400} value={h} disabled={fromExample} onChange={(e) => setH(Number(e.target.value))} /></label>
+          <label>Width (cm)<input type="number" min={150} max={1200} value={w} disabled={fixed} onChange={(e) => setW(Number(e.target.value))} /></label>
+          <label>Depth (cm)<input type="number" min={150} max={1200} value={d} disabled={fixed} onChange={(e) => setD(Number(e.target.value))} /></label>
+          <label>Height (cm)<input type="number" min={200} max={400} value={h} disabled={fixed} onChange={(e) => setH(Number(e.target.value))} /></label>
         </div>
-        <label className="lib-check">
-          <input type="checkbox" checked={fromExample} onChange={(e) => setFromExample(e.target.checked)} />
-          Start from the example room (Mila's room with its furniture and layouts)
-        </label>
+        <div className="lib-start-with" role="radiogroup" aria-labelledby="lib-start-with-label">
+          <span id="lib-start-with-label" className="caption">Start with</span>
+          <div className="lib-start-options">
+            {STARTS.map((o) => (
+              <label key={o.id} className={start === o.id ? 'lib-radio on' : 'lib-radio'}>
+                <input type="radio" name="start" value={o.id} checked={start === o.id} onChange={() => setStart(o.id)} />
+                <span className="lib-radio-text">
+                  <strong>{o.title}</strong>
+                  <small>{o.hint}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="row">
-        <button className="chip solid pink-btn" type="submit" disabled={!valid || busy}>Create</button>
+        <button className="chip solid pink-btn" type="submit" disabled={!valid || busy}>{busy ? 'Creating…' : 'Create room'}</button>
         <button className="chip ghost" type="button" onClick={onDone}>Cancel</button>
       </div>
     </form>
