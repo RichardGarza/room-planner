@@ -2,7 +2,7 @@
 
 Will the new bed fit? Room Planner is a small app for trying furniture layouts in a real room before you buy or move anything. Drag furniture around a 2D floor plan, see it in 3D, walk through the room at adult or child eye height, and get a plain-English list of what is in the way. Rooms are saved so you can come back to them when it is time to renovate.
 
-It runs in the browser and as a native Mac app.
+It runs in the browser and as a native Mac app. This repository is the Mac and web edition; the Windows version lives in its own repository.
 
 ## What it does
 
