@@ -3,6 +3,8 @@ import { getStorage } from '../storage'
 import { timeAgo, useLibrary, type StartWith } from '../library'
 import { migrateDoc } from '../migrate'
 import type { Item, Room, RoomDoc, RoomSummary } from '../types'
+import { formatRoomSize, useUnits } from '../units'
+import { LengthInput, UnitToggle } from './LengthInput'
 import { PlanThumb } from './PlanThumb'
 
 const NO_GROUP = 'No group'
@@ -118,6 +120,7 @@ export function Library() {
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Search rooms"
             />
+            <UnitToggle />
             <button className="chip ghost" onClick={() => void importDoc()}>Import JSON</button>
           </div>
         </div>
@@ -181,6 +184,7 @@ const STARTS: { id: StartWith; title: string; hint: string }[] = [
 
 function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void }) {
   const create = useLibrary((s) => s.create)
+  const unit = useUnits((s) => s.unit)
   const [name, setName] = useState('')
   const [group, setGroup] = useState('')
   const [w, setW] = useState(300)
@@ -217,9 +221,9 @@ function NewRoomPanel({ groups, onDone }: { groups: string[]; onDone: () => void
           </datalist>
         </label>
         <div className="dims-grid">
-          <label>Width (cm)<input type="number" min={150} max={1200} value={w} disabled={fixed} onChange={(e) => setW(Number(e.target.value))} /></label>
-          <label>Depth (cm)<input type="number" min={150} max={1200} value={d} disabled={fixed} onChange={(e) => setD(Number(e.target.value))} /></label>
-          <label>Height (cm)<input type="number" min={200} max={400} value={h} disabled={fixed} onChange={(e) => setH(Number(e.target.value))} /></label>
+          <label>Width ({unit})<LengthInput min={150} max={1200} value={w} disabled={fixed} onCommit={setW} /></label>
+          <label>Depth ({unit})<LengthInput min={150} max={1200} value={d} disabled={fixed} onCommit={setD} /></label>
+          <label>Height ({unit})<LengthInput min={200} max={400} value={h} disabled={fixed} onCommit={setH} /></label>
         </div>
         <div className="lib-start-with" role="radiogroup" aria-labelledby="lib-start-with-label">
           <span id="lib-start-with-label" className="caption">Start with</span>
@@ -255,6 +259,7 @@ function RoomCard({ summary, groups }: { summary: RoomSummary; groups: string[] 
   const duplicate = useLibrary((s) => s.duplicate)
   const exportDoc = useLibrary((s) => s.exportDoc)
   const remove = useLibrary((s) => s.remove)
+  const unit = useUnits((s) => s.unit)
   const [mode, setMode] = useState<CardMode>(null)
   const [draft, setDraft] = useState('')
   const preview = useDocPreview(summary.id, summary.updatedAt)
@@ -313,7 +318,7 @@ function RoomCard({ summary, groups }: { summary: RoomSummary; groups: string[] 
               <h3 onClick={() => void open(summary.id)}>{summary.name}</h3>
               <button className="icon lib-more" title="More" aria-label="More" onClick={() => setMode(mode === 'menu' ? null : 'menu')}>⋯</button>
             </div>
-            <div className="lib-meta">{summary.w} × {summary.d} cm · {summary.itemCount} item{summary.itemCount === 1 ? '' : 's'}</div>
+            <div className="lib-meta">{formatRoomSize(summary.w, summary.d, { unit })} · {summary.itemCount} item{summary.itemCount === 1 ? '' : 's'}</div>
             <div className="lib-meta muted">edited {timeAgo(summary.updatedAt)}</div>
           </>
         )}

@@ -44,7 +44,15 @@ function tucksUnder(chair: Item, desk: Item) {
   return chair.kind === 'chair' && desk.kind === 'desk' && overlapArea(rectOf(chair), rectOf(desk)) < 0.5 * chair.w * chair.d
 }
 
-export function runChecks(room: Room, items: Item[]): Check[] {
+export interface CheckOptions {
+  /** formats a length in cm for the check texts (default "N cm") */
+  len?: (cm: number) => string
+}
+
+const defaultLen = (cm: number) => `${Math.round(cm)} cm`
+
+export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): Check[] {
+  const len = opts.len ?? defaultLen
   const checks: Check[] = []
   const inRoom = items.filter((i) => i.inRoom)
   const solid = inRoom.filter((i) => !isRugKind(i.kind))
@@ -90,14 +98,14 @@ export function runChecks(room: Room, items: Item[]): Check[] {
       if (!touchesWall(room, r, win.wall, WALL_TOUCH + radDepth)) continue
       if (spanOverlap(spanOf(r, win.wall), win) < MIN_SPAN) continue
       if (it.h <= win.sill) {
-        checks.push({ level: 'ok', text: `${it.name} fits under ${label} with ${Math.round(win.sill - it.h)} cm to spare`, itemIds: [it.id] })
+        checks.push({ level: 'ok', text: `${it.name} fits under ${label} with ${len(win.sill - it.h)} to spare`, itemIds: [it.id] })
         continue
       }
       const above = Math.round(it.h - win.sill)
       const covered = Math.min(above, win.height) / win.height
       checks.push({
         level: covered > BLOCKS_WINDOW ? 'bad' : 'warn',
-        text: covered > BLOCKS_WINDOW ? `${it.name} blocks ${label}` : `${it.name} stands ${above} cm above ${sillOf(i, room.windows.length)}`,
+        text: covered > BLOCKS_WINDOW ? `${it.name} blocks ${label}` : `${it.name} stands ${len(above)} above ${sillOf(i, room.windows.length)}`,
         itemIds: [it.id],
       })
     }
@@ -154,7 +162,7 @@ export function runChecks(room: Room, items: Item[]): Check[] {
       const gap = Math.round(g.gap)
       checks.push({
         level: gap < MIN_PASSAGE ? 'warn' : 'ok',
-        text: `Passage between ${it.name.toLowerCase()} and bed: ${gap} cm`,
+        text: `Passage between ${it.name.toLowerCase()} and bed: ${len(gap)}`,
         itemIds: [bed.id, it.id],
       })
     }

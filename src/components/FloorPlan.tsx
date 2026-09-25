@@ -3,9 +3,12 @@ import { doorSwing, footprint, rectOf, wallAxes, wallPoint, wallStripRect } from
 import { isRugKind } from '../placement'
 import { useStore } from '../store'
 import type { Door, Item, Room, Wall } from '../types'
+import { CM_PER_IN, formatLength, useUnits } from '../units'
 
 const M = 34 // margin around the room for labels (cm units in the viewBox)
 const PARK_H = 150
+/** the scale bar: 1 m in cm mode, 3 ft in inch mode */
+const SCALE = { cm: { length: 100, label: '1 m' }, in: { length: 36 * CM_PER_IN, label: '3 ft' } }
 
 export function FloorPlan() {
   const room = useStore((s) => s.room)
@@ -16,6 +19,8 @@ export function FloorPlan() {
   const snapshot = useStore((s) => s.snapshot)
   const view = useStore((s) => s.view)
   const walkPose = useStore((s) => s.walkPose)
+  const unit = useUnits((s) => s.unit)
+  const scale = SCALE[unit]
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null)
 
@@ -138,8 +143,8 @@ export function FloorPlan() {
           .map((w) => (
             <WallText key={w} room={room} wall={w} t={(w === 'top' || w === 'bottom' ? room.w : room.d) / 2} text={w === 'left' ? 'LEFT WALL' : w === 'right' ? 'RIGHT WALL' : w === 'top' ? 'BACK WALL' : 'FRONT WALL'} />
           ))}
-        <text x={room.w} y={room.d + 16} className="plan-dim" textAnchor="end">{room.w} cm</text>
-        <text transform={`translate(${room.w + 16} 6) rotate(90)`} className="plan-dim">{room.d} cm</text>
+        <text x={room.w} y={room.d + 16} className="plan-dim" textAnchor="end">{formatLength(room.w, { unit, feet: true })}</text>
+        <text transform={`translate(${room.w + 16} 6) rotate(90)`} className="plan-dim">{formatLength(room.d, { unit, feet: true })}</text>
 
         {/* parking strip */}
         <g transform={`translate(0 ${room.d + 30})`}>
@@ -157,10 +162,10 @@ export function FloorPlan() {
 
         {/* scale */}
         <g transform={`translate(0 ${room.d + PARK_H + 8})`}>
-          <line x1={0} y1={0} x2={100} y2={0} stroke="#3f3833" strokeWidth={1.2} />
+          <line x1={0} y1={0} x2={scale.length} y2={0} stroke="#3f3833" strokeWidth={1.2} />
           <line x1={0} y1={-3} x2={0} y2={3} stroke="#3f3833" strokeWidth={1.2} />
-          <line x1={100} y1={-3} x2={100} y2={3} stroke="#3f3833" strokeWidth={1.2} />
-          <text x={50} y={12} className="plan-dim" textAnchor="middle">1 m</text>
+          <line x1={scale.length} y1={-3} x2={scale.length} y2={3} stroke="#3f3833" strokeWidth={1.2} />
+          <text x={scale.length / 2} y={12} className="plan-dim" textAnchor="middle">{scale.label}</text>
         </g>
       </g>
     </svg>
@@ -222,6 +227,7 @@ function WallText({ room, wall, t, text, dist = 14 }: { room: Room; wall: Wall; 
 
 function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boolean; onDown: (e: React.PointerEvent, it: Item) => void; muted?: boolean }) {
   const { fw } = footprint(item)
+  const unit = useUnits((s) => s.unit)
   const stroke = selected ? '#f28c28' : '#8f867d'
   const fontSize = Math.min(11, Math.max(7, fw / 6))
   return (
@@ -284,13 +290,14 @@ function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boo
         {item.name.split(' ').slice(0, 2).join(' ')}
       </text>
       <text className="plan-item-dim" textAnchor="middle" y={fontSize} fontSize={fontSize * 0.7}>
-        {item.w}×{item.d}
+        {formatLength(item.w, { unit, bare: true })}×{formatLength(item.d, { unit, bare: true })}
       </text>
     </g>
   )
 }
 
 function DimLines({ item, roomW, roomD }: { item: Item; roomW: number; roomD: number }) {
+  const unit = useUnits((s) => s.unit)
   const r = rectOf(item)
   const left = r.x0, right = roomW - r.x1, top = r.y0, bottom = roomD - r.y1
   const cy = (r.y0 + r.y1) / 2
@@ -305,7 +312,7 @@ function DimLines({ item, roomW, roomD }: { item: Item; roomW: number; roomD: nu
           <circle cx={horiz.x1} cy={cy} r={1.8} fill="#e5407a" />
           <circle cx={horiz.x2} cy={cy} r={1.8} fill="#e5407a" />
           <rect x={(horiz.x1 + horiz.x2) / 2 - 15} y={cy - 12} width={30} height={10} rx={3} fill="#fff" stroke="#e5407a" strokeWidth={0.6} />
-          <text x={(horiz.x1 + horiz.x2) / 2} y={cy - 4.5} className="dim-text" textAnchor="middle">{Math.round(horiz.v)} cm</text>
+          <text x={(horiz.x1 + horiz.x2) / 2} y={cy - 4.5} className="dim-text" textAnchor="middle">{formatLength(horiz.v, { unit })}</text>
         </g>
       )}
       {vert.v > 2 && (
@@ -314,7 +321,7 @@ function DimLines({ item, roomW, roomD }: { item: Item; roomW: number; roomD: nu
           <circle cx={cx} cy={vert.y1} r={1.8} fill="#e5407a" />
           <circle cx={cx} cy={vert.y2} r={1.8} fill="#e5407a" />
           <rect x={cx + 3} y={(vert.y1 + vert.y2) / 2 - 5} width={30} height={10} rx={3} fill="#fff" stroke="#e5407a" strokeWidth={0.6} />
-          <text x={cx + 18} y={(vert.y1 + vert.y2) / 2 + 2.5} className="dim-text" textAnchor="middle">{Math.round(vert.v)} cm</text>
+          <text x={cx + 18} y={(vert.y1 + vert.y2) / 2 + 2.5} className="dim-text" textAnchor="middle">{formatLength(vert.v, { unit })}</text>
         </g>
       )}
     </g>

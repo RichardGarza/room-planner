@@ -3,15 +3,19 @@
 /* the tab groups may need a second line in narrow windows */
 .topbar { height: auto; min-height: 56px; }
 
-.tab-groups { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; padding: 6px 0; }
-.tab-group { display: flex; align-items: flex-start; gap: 3px 6px; min-width: 0; }
-.tab-group .tabs { flex: 1; min-width: 0; justify-content: flex-start; gap: 3px; }
-.tab-group .tab { padding: 4px 10px; }
-.tab-label { width: 132px; flex: none; line-height: 26px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; padding: 0 2px; }
+/* one row in the common case: label, tabs, (divider, label, tabs); a group wraps to a second row only when there is no room */
+.tab-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; min-width: 0; padding: 5px 0; }
+.tab-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
+/* the tabs stay on the label's line and shorten their names (ellipsis) rather than wrapping */
+.tab-group .tabs { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; justify-content: flex-start; gap: 2px; }
+.tab-group .tab { padding: 5px 10px; font-size: 12px; gap: 5px; min-width: 0; }
+.tab-group .tab.refresh, .tab-group .tab.suggest-btn, .tab-group .tab.empty { flex: none; }
+.tab-group .tab .badge { flex: none; padding: 2px 5px; }
+.tab-label { flex: none; line-height: 26px; font-size: 9px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .tab-label.suggested { color: var(--pink); cursor: help; }
-.tab-divider { display: none; }
+.tab-divider { flex: none; width: 1px; height: 18px; background: var(--line); }
 
-.tab .tab-text { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab .tab-text { max-width: 230px; min-width: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab.suggest-btn { background: var(--pink-soft); color: var(--pink); }
 .tab.suggest-btn:hover { background: #fbd3e0; }
 .tab.suggest-btn:disabled { opacity: 0.6; cursor: default; }
@@ -54,5 +58,4 @@
 
 @media (max-width: 1100px) {
   .tab .tab-text { max-width: 180px; }
-  .tab-label { width: auto; }
 }

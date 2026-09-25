@@ -7,6 +7,8 @@ import { footprint, rectOf } from '../geometry'
 import { findFreeSpot, isRugKind } from '../placement'
 import { useStore, type NewItemSpec } from '../store'
 import type { Check } from '../types'
+import { formatLength, formatRoomDims, formatSize, useUnits } from '../units'
+import { LengthInput } from './LengthInput'
 
 export function Sidebar() {
   const room = useStore((s) => s.room)
@@ -15,7 +17,9 @@ export function Sidebar() {
   const savedLayouts = useStore((s) => s.savedLayouts)
   const suggestions = useStore((s) => s.suggestions)
   const selectedId = useStore((s) => s.selectedId)
-  const checks = useMemo(() => runChecks(room, items), [room, items])
+  const unit = useUnits((s) => s.unit)
+  // the check texts carry lengths, so they are worked out again when the unit changes
+  const checks = useMemo(() => runChecks(room, items, { len: (cm) => formatLength(cm, { unit }) }), [room, items, unit])
   const layout = [...presetLayouts, ...suggestions, ...savedLayouts].find((l) => l.id === activeLayoutId)
   const isSuggestion = !!layout && suggestions.includes(layout)
   const isSaved = !!layout && savedLayouts.includes(layout)
@@ -56,7 +60,7 @@ export function Sidebar() {
       <SavedLayouts />
 
       <p className="footnote">
-        Sizes are taken from photos and the IKEA catalogue (about ±2 cm). Measure the room with a tape before ordering.
+        Sizes are taken from photos and the IKEA catalogue (about ±{formatLength(2, { unit })}). Measure the room with a tape before ordering.
       </p>
     </aside>
   )
@@ -81,10 +85,11 @@ function SelectionCard({ id }: { id: string }) {
   const updateItem = useStore((s) => s.updateItem)
   const removeItem = useStore((s) => s.removeItem)
   const toggleInRoom = useStore((s) => s.toggleInRoom)
+  const unit = useUnits((s) => s.unit)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const r = rectOf(item)
   const { fw, fd } = footprint(item)
-  const num = (v: number) => Math.round(v)
+  const len = (v: number) => formatLength(v, { unit })
 
   return (
     <section className="card selection">
@@ -100,9 +105,9 @@ function SelectionCard({ id }: { id: string }) {
         <button className="chip" onClick={() => rotateItem(item.id, 180)} title="Turn around">⇄ 180°</button>
       </div>
       <div className="dims-grid">
-        <label>Width (cm)<input type="number" value={item.w} min={5} max={600} onChange={(e) => resizeItem(item.id, { w: +e.target.value || item.w })} /></label>
-        <label>Depth (cm)<input type="number" value={item.d} min={5} max={600} onChange={(e) => resizeItem(item.id, { d: +e.target.value || item.d })} /></label>
-        <label>Height (cm)<input type="number" value={item.h} min={1} max={400} onChange={(e) => resizeItem(item.id, { h: +e.target.value || item.h })} /></label>
+        <label>Width ({unit})<LengthInput value={item.w} min={5} max={600} onCommit={(w) => resizeItem(item.id, { w })} /></label>
+        <label>Depth ({unit})<LengthInput value={item.d} min={5} max={600} onCommit={(d) => resizeItem(item.id, { d })} /></label>
+        <label>Height ({unit})<LengthInput value={item.h} min={1} max={400} onCommit={(h) => resizeItem(item.id, { h })} /></label>
       </div>
       <label className="field">
         Type
@@ -112,7 +117,7 @@ function SelectionCard({ id }: { id: string }) {
       </label>
       {item.inRoom ? (
         <p className="muted small">
-          Footprint {num(fw)} × {num(fd)} cm · {num(r.x0)} cm from the left wall, {num(room.w - r.x1)} cm from the right wall, {num(r.y0)} cm from the back wall · turned {item.rot}°
+          Footprint {formatSize(fw, fd, undefined, { unit })} · {len(r.x0)} from the left wall, {len(room.w - r.x1)} from the right wall, {len(r.y0)} from the back wall · turned {item.rot}°
         </p>
       ) : (
         <p className="muted small">This item is out of the room.</p>
@@ -174,6 +179,7 @@ function FurniturePalette() {
   const [category, setCategory] = useState('All')
   const [customOpen, setCustomOpen] = useState(false)
   const [spec, setSpec] = useState<NewItemSpec>({ name: '', kind: 'box', w: 80, d: 40, h: 75, color: '#f7f4ef' })
+  const unit = useUnits((s) => s.unit)
   const upd = <K extends keyof NewItemSpec>(k: K, v: NewItemSpec[K]) => setSpec((p) => ({ ...p, [k]: v }))
 
   const q = query.trim().toLowerCase()
@@ -184,6 +190,7 @@ function FurniturePalette() {
     <section className="card">
       <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
         <h4>Add furniture</h4>
+        <span className="muted small" title="Sizes are width × depth × height">w × d × h in {unit === 'in' ? 'inches' : 'cm'}</span>
         <span className="chev">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
@@ -209,7 +216,7 @@ function FurniturePalette() {
                       >
                         <span className="swatch" style={{ background: p.color }} />
                         <span className="palette-name">{p.name}</span>
-                        <span className="palette-dims">{p.w}×{p.d}×{p.h}</span>
+                        <span className="palette-dims">{formatSize(p.w, p.d, p.h, { unit, bare: true, compact: true })}</span>
                       </button>
                     </li>
                   ))}
@@ -237,9 +244,9 @@ function FurniturePalette() {
                 </select>
               </label>
               <div className="dims-grid">
-                <label>Width (cm)<input type="number" value={spec.w} min={5} max={600} onChange={(e) => upd('w', +e.target.value)} /></label>
-                <label>Depth (cm)<input type="number" value={spec.d} min={5} max={600} onChange={(e) => upd('d', +e.target.value)} /></label>
-                <label>Height (cm)<input type="number" value={spec.h} min={1} max={400} onChange={(e) => upd('h', +e.target.value)} /></label>
+                <label>Width ({unit})<LengthInput value={spec.w} min={5} max={600} onCommit={(w) => upd('w', w)} /></label>
+                <label>Depth ({unit})<LengthInput value={spec.d} min={5} max={600} onCommit={(d) => upd('d', d)} /></label>
+                <label>Height ({unit})<LengthInput value={spec.h} min={1} max={400} onCommit={(h) => upd('h', h)} /></label>
               </div>
               <div className="row">
                 <button className="chip solid" type="submit">Add to the room</button>
@@ -251,8 +258,6 @@ function FurniturePalette() {
     </section>
   )
 }
-
-const n = (v: string, fallback: number) => (v === '' ? fallback : +v)
 
 /** Header line for one window / door / radiator row, with its remove button. */
 function OpeningHead({ label, onRemove }: { label: string; onRemove: () => void }) {
@@ -288,10 +293,10 @@ function WindowRows() {
             <OpeningHead label={windows.length > 1 ? `Window ${i + 1}` : 'Window'} onRemove={() => removeOpening('window', w.id)} />
             <div className="dims-grid four">
               <WallSelect value={w.wall} onChange={(wall) => patch({ wall })} />
-              <label>From corner<input type="number" value={w.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, w.offset) })} /></label>
-              <label>Width<input type="number" value={w.width} min={30} onChange={(e) => patch({ width: n(e.target.value, w.width) })} /></label>
-              <label>Height<input type="number" value={w.height} min={30} onChange={(e) => patch({ height: n(e.target.value, w.height) })} /></label>
-              <label>Sill height<input type="number" value={w.sill} min={0} onChange={(e) => patch({ sill: n(e.target.value, w.sill) })} /></label>
+              <label>From corner<LengthInput value={w.offset} min={0} max={1200} onCommit={(offset) => patch({ offset })} /></label>
+              <label>Width<LengthInput value={w.width} min={30} max={1200} onCommit={(width) => patch({ width })} /></label>
+              <label>Height<LengthInput value={w.height} min={30} max={400} onCommit={(height) => patch({ height })} /></label>
+              <label>Sill height<LengthInput value={w.sill} min={0} max={300} onCommit={(sill) => patch({ sill })} /></label>
             </div>
           </div>
         )
@@ -313,9 +318,9 @@ function DoorRows() {
             <OpeningHead label={doors.length > 1 ? `Door ${i + 1}` : 'Door'} onRemove={() => removeOpening('door', d.id)} />
             <div className="dims-grid four">
               <WallSelect value={d.wall} onChange={(wall) => patch({ wall })} />
-              <label>From corner<input type="number" value={d.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, d.offset) })} /></label>
-              <label>Width<input type="number" value={d.width} min={30} onChange={(e) => patch({ width: n(e.target.value, d.width) })} /></label>
-              <label>Height<input type="number" value={d.height} min={150} onChange={(e) => patch({ height: n(e.target.value, d.height) })} /></label>
+              <label>From corner<LengthInput value={d.offset} min={0} max={1200} onCommit={(offset) => patch({ offset })} /></label>
+              <label>Width<LengthInput value={d.width} min={30} max={400} onCommit={(width) => patch({ width })} /></label>
+              <label>Height<LengthInput value={d.height} min={150} max={400} onCommit={(height) => patch({ height })} /></label>
               <label>Hinge<select value={d.hinge} onChange={(e) => patch({ hinge: e.target.value as Door['hinge'] })}><option value="left">Near corner</option><option value="right">Far corner</option></select></label>
               <label>Swing<select value={d.swing} onChange={(e) => patch({ swing: e.target.value as Door['swing'] })}><option value="in">Into the room</option><option value="out">Out of the room</option></select></label>
             </div>
@@ -339,9 +344,9 @@ function RadiatorRows() {
             <OpeningHead label={radiators.length > 1 ? `Radiator ${i + 1}` : 'Radiator'} onRemove={() => removeOpening('radiator', r.id)} />
             <div className="dims-grid four">
               <WallSelect value={r.wall} onChange={(wall) => patch({ wall })} />
-              <label>From corner<input type="number" value={r.offset} min={0} onChange={(e) => patch({ offset: n(e.target.value, r.offset) })} /></label>
-              <label>Width<input type="number" value={r.width} min={20} onChange={(e) => patch({ width: n(e.target.value, r.width) })} /></label>
-              <label>Height<input type="number" value={r.height} min={20} onChange={(e) => patch({ height: n(e.target.value, r.height) })} /></label>
+              <label>From corner<LengthInput value={r.offset} min={0} max={1200} onCommit={(offset) => patch({ offset })} /></label>
+              <label>Width<LengthInput value={r.width} min={20} max={400} onCommit={(width) => patch({ width })} /></label>
+              <label>Height<LengthInput value={r.height} min={20} max={300} onCommit={(height) => patch({ height })} /></label>
             </div>
           </div>
         )
@@ -354,12 +359,13 @@ function RoomCard() {
   const room = useStore((s) => s.room)
   const setRoom = useStore((s) => s.setRoom)
   const addOpening = useStore((s) => s.addOpening)
+  const unit = useUnits((s) => s.unit)
   const [open, setOpen] = useState(false)
   return (
     <section className="card">
       <button className="card-toggle" onClick={() => setOpen((o) => !o)}>
         <h4>Room</h4>
-        <span className="muted small">{room.w} × {room.d} × {room.h} cm</span>
+        <span className="muted small">{formatRoomDims(room.w, room.d, room.h, { unit })}</span>
         <span className="chev">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
@@ -371,9 +377,9 @@ function RoomCard() {
             <input className="text" value={room.subtitle} onChange={(e) => setRoom({ subtitle: e.target.value })} placeholder="Subtitle, e.g. New bed 140 × 200" />
           </div>
           <div className="dims-grid">
-            <label>Width (cm)<input type="number" value={room.w} min={150} max={1200} onChange={(e) => setRoom({ w: n(e.target.value, room.w) })} /></label>
-            <label>Depth (cm)<input type="number" value={room.d} min={150} max={1200} onChange={(e) => setRoom({ d: n(e.target.value, room.d) })} /></label>
-            <label>Height (cm)<input type="number" value={room.h} min={200} max={400} onChange={(e) => setRoom({ h: n(e.target.value, room.h) })} /></label>
+            <label>Width ({unit})<LengthInput value={room.w} min={150} max={1200} onCommit={(w) => setRoom({ w })} /></label>
+            <label>Depth ({unit})<LengthInput value={room.d} min={150} max={1200} onCommit={(d) => setRoom({ d })} /></label>
+            <label>Height ({unit})<LengthInput value={room.h} min={200} max={400} onCommit={(h) => setRoom({ h })} /></label>
           </div>
           <p className="muted small">Width runs left to right on the plan, depth from the back wall to the front wall.</p>
 

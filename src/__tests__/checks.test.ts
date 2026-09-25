@@ -21,6 +21,23 @@ const room: Room = {
 
 const texts = (r: Room, items: Item[]) => runChecks(r, items).map((c) => `${c.level}: ${c.text}`)
 
+describe('length formatting', () => {
+  const inches = (cm: number) => `${Math.round(cm / 2.54)} in`
+  it('renders every length in the texts through the formatter', () => {
+    const fits = runChecks(room, [item({ h: 80 })], { len: inches }).map((c) => c.text)
+    expect(fits).toContain('Dresser fits under the window with 4 in to spare')
+    const above = runChecks(room, [item({ name: 'Chest', h: 130 })], { len: inches }).map((c) => c.text)
+    expect(above).toContain('Chest stands 16 in above the window sill')
+    const bed = item({ id: 'bed', name: 'Bed', kind: 'bed', w: 140, d: 200, x: 150, y: 200 })
+    const passage = runChecks(room, [item({ h: 80 }), bed], { len: inches }).map((c) => c.text)
+    expect(passage).toContain('Passage between dresser and bed: 20 in')
+    for (const t of [...fits, ...above, ...passage]) expect(t).not.toMatch(/\d cm\b/)
+  })
+  it('keeps "N cm" without a formatter', () => {
+    expect(texts(room, [item({ h: 80 })])).toContain('ok: Dresser fits under the window with 10 cm to spare')
+  })
+})
+
 describe('window fit', () => {
   it('says an 80 cm dresser fits under a 90 cm sill', () => {
     const t = texts(room, [item({ h: 80 })])

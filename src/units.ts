@@ -79,11 +79,12 @@ export function formatLength(cm: number, opts: FormatOptions = {}): string {
   return opts.bare ? t : `${t} in`
 }
 
-/** "54 × 30 × 35 in" / "137 × 76 × 89 cm" (height optional). */
-export function formatSize(w: number, d: number, h?: number, opts: FormatOptions = {}): string {
+/** "54 × 30 × 35 in" / "137 × 76 × 89 cm" (height optional; `bare` drops the unit, `compact` drops the spaces: "54×30×35"). */
+export function formatSize(w: number, d: number, h?: number, opts: FormatOptions & { compact?: boolean } = {}): string {
   const unit = opts.unit ?? currentUnit()
   const parts = [w, d, ...(h === undefined ? [] : [h])].map((v) => formatLength(v, { unit, bare: true }))
-  return `${parts.join(' × ')} ${unit}`
+  const joined = parts.join(opts.compact ? '×' : ' × ')
+  return opts.bare ? joined : `${joined} ${unit}`
 }
 
 /** Room size for titles: "11′ 9″ × 9′ 8″" or "358 × 295 cm". */
@@ -91,6 +92,13 @@ export function formatRoomSize(w: number, d: number, opts: FormatOptions = {}): 
   const unit = opts.unit ?? currentUnit()
   if (unit === 'cm') return `${Math.round(w)} × ${Math.round(d)} cm`
   return `${formatLength(w, { unit, feet: true })} × ${formatLength(d, { unit, feet: true })}`
+}
+
+/** Room size with its height: "11′ 9″ × 9′ 8″ × 8′" or "358 × 295 × 244 cm". */
+export function formatRoomDims(w: number, d: number, h: number, opts: FormatOptions = {}): string {
+  const unit = opts.unit ?? currentUnit()
+  if (unit === 'cm') return formatSize(w, d, h, { unit })
+  return `${formatRoomSize(w, d, { unit })} × ${formatLength(h, { unit, feet: true })}`
 }
 
 /** Convert cm to the number a user would type in the given unit (inches to the nearest half). */
