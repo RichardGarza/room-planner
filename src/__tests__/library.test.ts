@@ -386,7 +386,7 @@ describe('copying an item to another room', () => {
     expect('note' in copy).toBe(false)
     expect(inside(target.room, copy)).toBe(true)
     const spot = findFreeSpot(target.room, [], 100, 58, { h: 200 })
-    expect({ x: copy.x, y: copy.y, rot: copy.rot }).toEqual(spot)
+    expect({ x: copy.x, y: copy.y, rot: copy.rot }).toEqual({ x: spot.x, y: spot.y, rot: spot.rot })
     expect(target.updatedAt > '2020-01-01T00:00:00.000Z').toBe(true)
     expect(storage.saves).toBe(saves + 1)
 
