@@ -1,10 +1,8 @@
-import { doorSwing, footprint, intersects, rectOf, wallLength, wallStripRect } from './geometry'
-import type { Item, ItemKind, Rect, Room, Rot, Wall } from './types'
+import { doorSwing, footprint, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
+export { isRugKind }
+import type { Door, Item, Rect, Room, Rot, Wall } from './types'
 
 /** Rugs lie under everything else: they never block a spot and nothing needs to avoid them. */
-export function isRugKind(kind: ItemKind) {
-  return kind === 'rug' || kind === 'rugRect'
-}
 
 export interface Spot {
   x: number
@@ -67,21 +65,26 @@ function* chain<T>(...parts: Iterable<T>[]) {
 /** Strips that only cause a warning: the window (for tall items) and the radiator. */
 function softBlockers(room: Room, h?: number): Rect[] {
   const out: Rect[] = []
-  const win = room.window
-  if (h !== undefined && h > win.sill && win.width > 0) out.push(wallStripRect(room, win.wall, win.offset, win.width, WINDOW_DEPTH))
-  const rad = room.radiator
-  if (rad.width > 0) out.push(wallStripRect(room, rad.wall, rad.offset, rad.width, rad.depth + RADIATOR_CLEAR))
+  for (const win of room.windows) {
+    if (h !== undefined && h > win.sill && win.width > 0) out.push(wallStripRect(room, win.wall, win.offset, win.width, WINDOW_DEPTH))
+  }
+  for (const rad of room.radiators) {
+    if (rad.width > 0) out.push(wallStripRect(room, rad.wall, rad.offset, rad.width, rad.depth + RADIATOR_CLEAR))
+  }
   return out
 }
 
 /** True when the rect reaches into the quarter circle the door leaf sweeps (or the doorway itself). */
 function doorBlocks(room: Room, rect: Rect): boolean {
-  const { door } = room
+  return room.doors.some((door) => doorBlocksOne(room, door, rect))
+}
+
+function doorBlocksOne(room: Room, door: Door, rect: Rect): boolean {
   if (door.swing === 'out') {
     // the leaf swings away from the room; just keep the doorway itself clear
     return intersects(rect, wallStripRect(room, door.wall, door.offset, door.width, Math.min(60, door.width)))
   }
-  const { hx, hy, r, leafDir } = doorSwing(room)
+  const { hx, hy, r, leafDir } = doorSwing(room, door)
   // the quarter disc lies inside the r-square around the hinge
   if (rect.x1 <= hx - r || rect.x0 >= hx + r || rect.y1 <= hy - r || rect.y0 >= hy + r) return false
   const inside = (px: number, py: number) => px > rect.x0 + 0.5 && px < rect.x1 - 0.5 && py > rect.y0 + 0.5 && py < rect.y1 - 0.5
@@ -115,7 +118,8 @@ function* sweep(lo: number, hi: number) {
 
 function* wallCandidates(room: Room, w: number, d: number): Generator<Spot> {
   const walls: Wall[] = ['top', 'left', 'right', 'bottom']
-  const order = [...walls.filter((wl) => wl !== room.door.wall), room.door.wall]
+  const doorWalls = new Set(room.doors.map((dr) => dr.wall))
+  const order = [...walls.filter((wl) => !doorWalls.has(wl)), ...walls.filter((wl) => doorWalls.has(wl))]
   for (const wall of order) {
     const rot = BACK_TO_WALL[wall]
     const { fw, fd } = footprint({ w, d, rot })

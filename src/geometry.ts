@@ -1,4 +1,9 @@
-import type { Door, Item, Rect, Room, Wall } from './types'
+import type { Door, Item, ItemKind, Rect, Room, Wall } from './types'
+
+/** Rugs are walked over and lie under other furniture, so they never collide. */
+export function isRugKind(kind: ItemKind) {
+  return kind === 'rug' || kind === 'rugRect'
+}
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -109,7 +114,7 @@ export function doorClearanceFor(room: Room, door: Door, items: Item[]) {
   if (door.swing === 'out') return { maxAngle: best, blocker }
   const { hx, hy, r, leafDir } = doorSwing(room, door)
   for (const it of items) {
-    if (!it.inRoom || it.kind === 'rug') continue
+    if (!it.inRoom || isRugKind(it.kind)) continue
     const rc = rectOf(it)
     for (let deg = 5; deg <= 90; deg += 5) {
       const [dx, dy] = leafDir(deg)

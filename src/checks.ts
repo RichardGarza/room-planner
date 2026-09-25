@@ -1,4 +1,4 @@
-import { doorClearanceFor, doorwayRect, gapBetween, intersects, overlapArea, rectOf, wallStripRect } from './geometry'
+import { doorClearanceFor, doorwayRect, gapBetween, intersects, isRugKind, overlapArea, rectOf, wallStripRect } from './geometry'
 import type { Check, Item, Rect, Room, Wall } from './types'
 
 const MIN_PASSAGE = 60
@@ -47,7 +47,7 @@ function tucksUnder(chair: Item, desk: Item) {
 export function runChecks(room: Room, items: Item[]): Check[] {
   const checks: Check[] = []
   const inRoom = items.filter((i) => i.inRoom)
-  const solid = inRoom.filter((i) => i.kind !== 'rug')
+  const solid = inRoom.filter((i) => !isRugKind(i.kind))
   const bed = inRoom.find((i) => i.kind === 'bed')
 
   // 1. Items poking through walls

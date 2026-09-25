@@ -8,7 +8,7 @@ export const defaultRoom: Room = {
   h: 260,
   windows: [{ id: 'w1', wall: 'top', offset: 60, width: 150, height: 130, sill: 90 }],
   doors: [{ id: 'd1', wall: 'bottom', offset: 85, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
-  radiators: [{ id: 'r1', wall: 'top', offset: 75, width: 120, depth: 10, height: 60 }],
+  radiators: [],
   wallColors: { left: '#e9c2d3', right: '#e9c2d3', top: '#f1ece6', bottom: '#f1ece6' },
   floorColor: '#8a4a34',
 }
@@ -76,10 +76,10 @@ export const presetLayouts: Layout[] = [
     id: 'C',
     name: 'C · Bed across under the window',
     description:
-      'Bed turned sideways with the headboard against the window wall. Frees the long walls but covers the window and radiator, and the shelf has to go.',
+      'Bed turned sideways with the headboard against the window wall. Frees the long walls but covers part of the window, and the shelf has to go.',
     placements: {
       ...base,
-      bed: { x: 135, y: 92, rot: 90, inRoom: true },
+      bed: { x: 135, y: 82, rot: 90, inRoom: true },
       shelf: { x: 35, y: 30, rot: 0, inRoom: false },
       desk: { x: 25, y: 225, rot: 90, inRoom: true },
       chair: { x: 68, y: 225, rot: 0, inRoom: true },

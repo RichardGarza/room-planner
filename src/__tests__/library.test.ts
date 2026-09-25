@@ -15,6 +15,7 @@ class MemoryStorage {
 import { AUTOSAVE_MS, SEEDED_KEY, roomOpenings, timeAgo, useLibrary } from '../library'
 import { useStore } from '../store'
 import { summarize, type RoomStorage } from '../storage/types'
+import { DOC_VERSION } from '../migrate'
 import { defaultRoom } from '../data'
 import type { RoomDoc } from '../types'
 
@@ -224,7 +225,7 @@ describe('library', () => {
     expect(st.room.wallColors).toEqual(defaultRoom.wallColors)
     expect(st.items).toHaveLength(1)
     expect(st.savedLayouts).toEqual([])
-    expect(storage.docs.get('room-old')!.version).toBe(1)
+    expect(storage.docs.get('room-old')!.version).toBe(DOC_VERSION)
     expect(useLibrary.getState().rooms.map((r) => r.name).sort()).toEqual(["Mila's room", 'Old room'])
 
     // an unreadable file is reported, not thrown
@@ -235,11 +236,11 @@ describe('library', () => {
 })
 
 describe('helpers', () => {
-  it('roomOpenings supports the singular and the array shape', () => {
+  it('roomOpenings returns the window and door lists', () => {
     const single = roomOpenings(defaultRoom)
     expect(single.windows).toHaveLength(1)
     expect(single.doors[0].hinge).toBe('right')
-    const arrays = roomOpenings({ ...defaultRoom, windows: [defaultRoom.window, defaultRoom.window], doors: [] } as never)
+    const arrays = roomOpenings({ ...defaultRoom, windows: [defaultRoom.windows[0], defaultRoom.windows[0]], doors: [] })
     expect(arrays.windows).toHaveLength(2)
     expect(arrays.doors).toHaveLength(0)
   })

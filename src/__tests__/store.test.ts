@@ -82,7 +82,7 @@ describe('opening actions', () => {
     expect(room.windows.map((w) => w.id)).toEqual(['w1'])
 
     const radId = s.addOpening('radiator')
-    expect(useStore.getState().room.radiators.map((r) => r.id)).toEqual(['r1', radId])
+    expect(useStore.getState().room.radiators.map((r) => r.id)).toEqual([radId])
   })
 
   it('walks to the room centre when there is no door', () => {

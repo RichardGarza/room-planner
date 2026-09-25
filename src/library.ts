@@ -109,15 +109,9 @@ function emptyDoc(input: CreateInput): RoomDoc {
   })!
 }
 
-/**
- * Openings of a room regardless of whether it stores them as single fields
- * (window/door/radiator) or as arrays (windows/doors/radiators).
- */
+/** Openings of a room (older documents are converted by migrateRoom before they get here). */
 export function roomOpenings(room: Room): { windows: Opening[]; doors: Door[] } {
-  const r = room as Room & { windows?: Opening[]; doors?: Door[] }
-  const windows = Array.isArray(r.windows) ? r.windows : r.window ? [r.window] : []
-  const doors = Array.isArray(r.doors) ? r.doors : r.door ? [r.door] : []
-  return { windows, doors }
+  return { windows: room.windows ?? [], doors: room.doors ?? [] }
 }
 
 /** The shape a Share link carries in the URL hash (same as store.ts shareUrl). */

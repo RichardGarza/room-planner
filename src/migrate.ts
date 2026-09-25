@@ -82,7 +82,7 @@ export function migrateRoom(raw: unknown): Room {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const baseWin = defaultRoom.windows[0]
   const baseDoor = defaultRoom.doors[0]
-  const baseRad = defaultRoom.radiators[0]
+  const baseRad: Radiator = defaultRoom.radiators[0] ?? { id: 'r1', wall: 'top', offset: 0, width: 100, depth: 10, height: 60 }
 
   // A room that carries no opening fields at all gets the default set; one that has some keeps what it has.
   const bare = !['windows', 'window', 'doors', 'door', 'radiators', 'radiator'].some((k) => k in r)

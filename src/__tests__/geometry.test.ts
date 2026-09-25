@@ -73,10 +73,17 @@ describe('geometry', () => {
 })
 
 describe('checks', () => {
-  it('flags an item in front of the radiator in layout A', () => {
+  it('flags an item in front of a radiator under the window in layout A', () => {
+    const room = { ...defaultRoom, radiators: [{ id: 'r1', wall: 'top' as const, offset: 75, width: 120, depth: 10, height: 60 }] }
+    const items = defaultItems.map((i) => ({ ...i, ...presetLayouts[0].placements[i.id] }))
+    const texts = runChecks(room, items).map((c) => c.text)
+    expect(texts.some((t) => /radiator/.test(t))).toBe(true)
+  })
+
+  it('reports no radiator problems when the room has none', () => {
     const items = defaultItems.map((i) => ({ ...i, ...presetLayouts[0].placements[i.id] }))
     const texts = runChecks(defaultRoom, items).map((c) => c.text)
-    expect(texts.some((t) => /radiator/.test(t))).toBe(true)
+    expect(texts.some((t) => /radiator/.test(t))).toBe(false)
   })
 
   it('flags a bed blocking the window in layout C', () => {

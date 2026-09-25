@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { rectOf, wallLength } from '../geometry'
+import { isRugKind, rectOf, wallLength } from '../geometry'
 import { useStore, type OutsideAngle } from '../store'
 import type { Door, Item, Opening, Radiator as RadiatorSpec, Room, Wall } from '../types'
 
@@ -163,7 +163,7 @@ function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       const blocked = (px: number, py: number) => {
         if (px < 20 || px > room.w - 20 || py < 20 || py > room.d - 20) return true
         return items.some((it) => {
-          if (!it.inRoom || it.kind === 'rug') return false
+          if (!it.inRoom || isRugKind(it.kind)) return false
           const r = rectOf(it)
           return px > r.x0 - 12 && px < r.x1 + 12 && py > r.y0 - 12 && py < r.y1 + 12
         })

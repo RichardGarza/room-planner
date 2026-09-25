@@ -26,3 +26,6 @@ dist-ssr
 # Tauri (Mac app)
 src-tauri/target
 src-tauri/gen/schemas
+
+# Claude Code worktrees
+.claude/
