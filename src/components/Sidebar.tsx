@@ -6,6 +6,7 @@ import { catalog, categories } from '../catalog'
 import { footprint, rectOf } from '../geometry'
 import { findFreeSpot, isRugKind } from '../placement'
 import { useStore, type NewItemSpec } from '../store'
+import { ClosetRows } from './ClosetRows'
 import type { Check } from '../types'
 
 export function Sidebar() {
@@ -392,6 +393,8 @@ function RoomCard() {
           {room.radiators.length === 0 && <p className="muted small">No radiators.</p>}
           <RadiatorRows />
           <div className="row"><button className="chip ghost" onClick={() => addOpening('radiator')}>+ Add radiator</button></div>
+
+          <ClosetRows />
 
           <h5>Colours</h5>
           <div className="colors">

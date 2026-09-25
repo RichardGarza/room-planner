@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { useLayoutEffect, useMemo, useRef } from 'react'
-import { wallLength } from '../geometry'
+import { CLOSET_HEIGHT, wallLength } from '../geometry'
 import { useStore } from '../store'
 import type { Door, Opening, Radiator as RadiatorSpec, Room, Wall } from '../types'
+import { Closet } from './Closet'
 import { Outside } from './Outside'
 import { ceilingMaps, fabricMaps, plasterMaps } from './textures'
 import { cm, mergedBoxes, profileAlongX, seeded, starShape, WALL_T, worldUvBox, type BoxSpec } from './util'
@@ -25,7 +26,7 @@ export function wallTransform(room: Room, wall: Wall): { position: [number, numb
   }
 }
 
-type Detail = 'best' | 'fast'
+export type Detail = 'best' | 'fast'
 
 /* Shared materials: one instance per look, reused by every mesh that needs it. */
 const matCache = new Map<string, THREE.Material>()
@@ -34,9 +35,9 @@ function sharedMat<T extends THREE.Material>(key: string, make: () => T): T {
   if (!m) { m = make(); matCache.set(key, m) }
   return m
 }
-const paint = (color: string, roughness = 0.55) => sharedMat(`paint-${color}-${roughness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 }))
-const chrome = () => sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: '#b9bcc2', metalness: 0.9, roughness: 0.28 }))
-const brushed = () => sharedMat('brushed', () => new THREE.MeshStandardMaterial({ color: '#8f9094', metalness: 0.85, roughness: 0.42 }))
+export const paint = (color: string, roughness = 0.55) => sharedMat(`paint-${color}-${roughness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 }))
+export const chrome = () => sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: '#b9bcc2', metalness: 0.9, roughness: 0.28 }))
+export const brushed = () => sharedMat('brushed', () => new THREE.MeshStandardMaterial({ color: '#8f9094', metalness: 0.85, roughness: 0.42 }))
 function clothMat(color: string, detail: Detail) {
   return sharedMat(`cloth-${color}-${detail}`, () => {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 1, side: THREE.DoubleSide })
@@ -49,7 +50,7 @@ function clothMat(color: string, detail: Detail) {
     return m
   })
 }
-function wallMat(color: string, detail: Detail) {
+export function wallMat(color: string, detail: Detail) {
   return sharedMat(`wall-${color}-${detail}`, () => {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0 })
     if (detail === 'best') {
@@ -163,7 +164,10 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
   const windows = room.windows.filter((o) => o.wall === wall)
   const doors = room.doors.filter((o) => o.wall === wall)
   const radiators = room.radiators.filter((o) => o.wall === wall)
-  const openings = [...windows, ...doors].sort((a, b) => a.offset - b.offset)
+  const closets = (room.closets ?? []).filter((o) => o.wall === wall)
+  // a closet opening is cut like a door: from the floor up to its height
+  const cuts = closets.map((c) => ({ offset: c.offset, width: c.width, sill: 0, height: c.height ?? CLOSET_HEIGHT }))
+  const openings = [...windows, ...doors, ...cuts].sort((a, b) => a.offset - b.offset)
   const mat = wallMat(color, detail)
   const trim = paint('#f8f6f2', 0.5)
 
@@ -189,18 +193,18 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
     })
   }, [L, H, JSON.stringify(openings)])
 
-  // Skirting and cornice run along the wall; the skirting stops at each door.
+  // Skirting and cornice run along the wall; the skirting stops at each door and closet.
   const skirting = useMemo(() => {
     const runs: [number, number][] = []
     let sc = 0
-    for (const d of [...doors].sort((a, b) => a.offset - b.offset)) {
+    for (const d of [...doors, ...cuts].sort((a, b) => a.offset - b.offset)) {
       const d0 = cm(d.offset) - 0.05, d1 = cm(d.offset + d.width) + 0.05
       if (d0 > sc) runs.push([sc, d0])
       sc = Math.max(sc, d1)
     }
     if (sc < L) runs.push([sc, L])
     return runs.map(([a, b]) => profileAlongX(skirtProfile, a, b))
-  }, [L, JSON.stringify(doors)])
+  }, [L, JSON.stringify(doors), JSON.stringify(cuts)])
   const cornice = useMemo(() => profileAlongX(corniceProfile(H), 0, L), [H, L])
 
   return (
@@ -214,6 +218,7 @@ export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wa
       {windows.map((w) => <Window key={w.id} win={w} daytime={daytime} detail={detail} />)}
       {radiators.map((r) => <Radiator key={r.id} radiator={r} />)}
       {doors.map((d) => <Doorway key={d.id} room={room} door={d} daytime={daytime} />)}
+      {closets.map((c) => <Closet key={c.id} room={room} closet={c} detail={detail} />)}
       {(wall === 'left' || wall === 'right') && <Stars room={room} side={wall} />}
     </group>
   )

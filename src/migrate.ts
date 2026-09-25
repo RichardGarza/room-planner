@@ -1,5 +1,5 @@
 import { defaultRoom } from './data'
-import type { Door, Opening, Radiator, Room, RoomDoc, Wall } from './types'
+import type { Closet, Door, Opening, Radiator, Room, RoomDoc, Wall } from './types'
 
 export const DOC_VERSION = 2
 
@@ -57,6 +57,22 @@ function fixRadiator(raw: unknown, base: Radiator): Unkeyed<Radiator> {
   }
 }
 
+const CLOSET_DOORS: Closet['doors'][] = ['none', 'hinged', 'bifold', 'sliding']
+
+function fixCloset(raw: unknown, base: Closet): Unkeyed<Closet> {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<Closet>
+  const closet: Unkeyed<Closet> = {
+    id: idOf(o.id),
+    wall: wallOf(o.wall, base.wall),
+    offset: num(o.offset, base.offset),
+    width: num(o.width, base.width),
+    depth: num(o.depth, base.depth),
+    doors: CLOSET_DOORS.includes(o.doors as Closet['doors']) ? (o.doors as Closet['doors']) : base.doors,
+  }
+  if (typeof o.height === 'number' && Number.isFinite(o.height)) closet.height = o.height
+  return closet
+}
+
 /** Give every entry a unique id, keeping the ones that are already there (first one wins on a duplicate). */
 function withIds<T extends { id: string | null }>(list: T[], prefix: string): (T & { id: string })[] {
   const used = new Set<string>()
@@ -93,6 +109,10 @@ export function migrateRoom(raw: unknown): Room {
   const windows = withIds(winRaw.map((o) => fixWindow(o, baseWin)), 'w')
   const doors = withIds(doorRaw.map((o) => fixDoor(o, baseDoor)), 'd')
   const radiators = withIds(radRaw.map((o) => fixRadiator(o, baseRad)), 'r').filter((o) => o.width > 0)
+  // closets are newer than the rest: a room without any simply has none
+  const baseCloset: Closet = { id: 'c1', wall: 'right', offset: 0, width: 150, depth: 60, doors: 'bifold' }
+  const closetRaw: unknown[] = Array.isArray(r.closets) ? r.closets : []
+  const closets = withIds(closetRaw.map((o) => fixCloset(o, baseCloset)), 'c').filter((o) => o.width > 0)
 
   const colors = (r.wallColors && typeof r.wallColors === 'object' ? r.wallColors : {}) as Partial<Room['wallColors']>
   return {
@@ -104,6 +124,7 @@ export function migrateRoom(raw: unknown): Room {
     windows,
     doors,
     radiators,
+    closets,
     wallColors: { ...defaultRoom.wallColors, ...colors },
     floorColor: typeof r.floorColor === 'string' ? r.floorColor : defaultRoom.floorColor,
   }

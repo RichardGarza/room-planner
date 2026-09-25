@@ -9,6 +9,7 @@ export const defaultRoom: Room = {
   windows: [{ id: 'w1', wall: 'top', offset: 60, width: 150, height: 130, sill: 90 }],
   doors: [{ id: 'd1', wall: 'bottom', offset: 85, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
   radiators: [],
+  closets: [],
   wallColors: { left: '#e9c2d3', right: '#e9c2d3', top: '#f1ece6', bottom: '#f1ece6' },
   floorColor: '#8a4a34',
 }
@@ -26,6 +27,7 @@ export function makeEmptyRoom(name: string, w = 300, d = 400, h = 260): Room {
     windows: [{ id: 'w1', wall: 'top', offset: Math.round((w - winW) / 2), width: winW, height: 120, sill: 90 }],
     doors: [{ id: 'd1', wall: 'bottom', offset: 20, width: 80, height: 205, sill: 0, hinge: 'right', swing: 'in' }],
     radiators: [],
+    closets: [],
   }
 }
 

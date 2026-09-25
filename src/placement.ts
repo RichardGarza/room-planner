@@ -1,6 +1,6 @@
-import { doorSwing, footprint, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
+import { closetClearance, doorSwing, footprint, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
 export { isRugKind }
-import type { Door, Item, Rect, Room, Rot, Wall } from './types'
+import type { Door, Item, ItemKind, Rect, Room, Rot, Wall } from './types'
 
 /** Rugs lie under everything else: they never block a spot and nothing needs to avoid them. */
 
@@ -15,9 +15,13 @@ export interface PlacementOptions {
   h?: number
   /** 'wall' (default) tries the walls first; 'centre' works outwards from the middle (rugs). */
   prefer?: 'wall' | 'centre'
+  /** What is being placed. Furniture (not beds, nightstands or rugs) keeps a walking gap beside the beds when it can. */
+  kind?: ItemKind
 }
 
 const GRID = 10
+/** gap kept between a new piece and a bed so there is still room to walk and climb in */
+const BED_GAP = 60
 /** Same strips checks.ts uses for window coverage and radiator clearance. */
 const WINDOW_DEPTH = 12
 const RADIATOR_CLEAR = 15
@@ -26,40 +30,64 @@ const RADIATOR_CLEAR = 15
 const BACK_TO_WALL: Record<Wall, Rot> = { top: 0, right: 90, bottom: 180, left: 270 }
 
 /**
- * Find a centre for a new w×d item: inside the room, clear of every solid item and of the
- * door swing, preferably against a wall (turned so its back faces the wall), else on a
- * 10 cm grid over the floor, else the room centre.
+ * Find a centre for a new w×d item: inside the room, clear of every solid item, of the
+ * door swing and of the space closet doors need, preferably against a wall (turned so its
+ * back faces the wall), else on a 10 cm grid over the floor, else the room centre.
+ * Furniture (not beds, nightstands or rugs) also prefers a spot that leaves a walking gap
+ * beside the long sides of the beds, so a dresser does not end up flush against one.
  */
 export function findFreeSpot(room: Room, items: Item[], w: number, d: number, opts: PlacementOptions = {}): Spot {
   const prefer = opts.prefer ?? 'wall'
   const solid = items.filter((i) => i.inRoom && !isRugKind(i.kind)).map(rectOf)
+  const closets = (room.closets ?? []).map((c) => closetClearance(room, c).rect)
   const soft = softBlockers(room, opts.h)
+  const keepsGap = prefer === 'wall' && opts.kind !== 'bed' && opts.kind !== 'nightstand' && !(opts.kind && isRugKind(opts.kind))
+  const bedGaps = keepsGap ? bedGapStrips(items) : []
 
-  const isFree = (rect: Rect, strict: boolean) =>
+  const isFree = (rect: Rect, strict: boolean, bedGap: boolean) =>
     rect.x0 >= -0.01 && rect.y0 >= -0.01 && rect.x1 <= room.w + 0.01 && rect.y1 <= room.d + 0.01 &&
     !solid.some((s) => intersects(rect, s)) &&
     !doorBlocks(room, rect) &&
-    (!strict || !soft.some((s) => intersects(rect, s)))
+    !closets.some((c) => intersects(rect, c)) &&
+    (!strict || !soft.some((s) => intersects(rect, s))) &&
+    (!bedGap || !bedGaps.some((s) => intersects(rect, s)))
 
-  const candidates = (): Iterable<Spot> =>
-    prefer === 'centre' ? centreCandidates(room, w, d) : chain(wallCandidates(room, w, d), gridCandidates(room, w, d))
+  const groups = (): Iterable<Spot>[] =>
+    prefer === 'centre' ? [centreCandidates(room, w, d)] : [[...wallCandidates(room, w, d)], gridCandidates(room, w, d)]
 
   // First keep clear of the window and radiator too; if that finds nothing, allow them.
+  // Within each group (walls, then the floor grid) a spot with a gap beside the beds beats one without.
   for (const strict of soft.length ? [true, false] : [false]) {
-    for (const spot of candidates()) {
-      const { fw, fd } = footprint({ w, d, rot: spot.rot })
-      if (isFree(rectAt(spot.x, spot.y, fw, fd), strict)) return spot
+    for (const group of groups()) {
+      const spots = bedGaps.length ? [...group] : group
+      for (const bedGap of bedGaps.length ? [true, false] : [false]) {
+        for (const spot of spots) {
+          const { fw, fd } = footprint({ w, d, rot: spot.rot })
+          if (isFree(rectAt(spot.x, spot.y, fw, fd), strict, bedGap)) return spot
+        }
+      }
     }
   }
   return { x: room.w / 2, y: room.d / 2, rot: 0 }
 }
 
-function rectAt(x: number, y: number, fw: number, fd: number): Rect {
-  return { x0: x - fw / 2, y0: y - fd / 2, x1: x + fw / 2, y1: y + fd / 2 }
+/** BED_GAP-wide strips along the long sides of every bed in the room: a new piece should not stand in them. */
+function bedGapStrips(items: Item[]): Rect[] {
+  const out: Rect[] = []
+  for (const bed of items) {
+    if (!bed.inRoom || bed.kind !== 'bed') continue
+    const r = rectOf(bed)
+    if (r.y1 - r.y0 >= r.x1 - r.x0) {
+      out.push({ x0: r.x0 - BED_GAP, y0: r.y0, x1: r.x0, y1: r.y1 }, { x0: r.x1, y0: r.y0, x1: r.x1 + BED_GAP, y1: r.y1 })
+    } else {
+      out.push({ x0: r.x0, y0: r.y0 - BED_GAP, x1: r.x1, y1: r.y0 }, { x0: r.x0, y0: r.y1, x1: r.x1, y1: r.y1 + BED_GAP })
+    }
+  }
+  return out
 }
 
-function* chain<T>(...parts: Iterable<T>[]) {
-  for (const p of parts) yield* p
+function rectAt(x: number, y: number, fw: number, fd: number): Rect {
+  return { x0: x - fw / 2, y0: y - fd / 2, x1: x + fw / 2, y1: y + fd / 2 }
 }
 
 /** Strips that only cause a warning: the window (for tall items) and the radiator. */

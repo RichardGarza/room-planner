@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
-import { doorSwing, footprint, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
+import { closetClearance, closetRecessRect, doorSwing, footprint, frontRecessPad, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
 import { isRugKind } from '../placement'
 import { useStore } from '../store'
-import type { Door, Item, Room, Wall } from '../types'
+import type { Closet, Door, Item, Room, Wall } from '../types'
 
 const M = 34 // margin around the room for labels (cm units in the viewBox)
 const PARK_H = 150
@@ -43,12 +43,16 @@ export function FloorPlan() {
   }
   const onUp = () => setDrag(null)
 
-  const W = room.w + M * 2
-  const H = room.d + M * 2 + PARK_H
   const sel = items.find((i) => i.id === selectedId)
   // doors that swing out draw their arc outside the room: widen the view so it is not clipped
   const outPad = (wall: Wall) => Math.max(0, ...room.doors.filter((d) => d.swing === 'out' && d.wall === wall).map((d) => d.width + 22 - M))
-  const padL = outPad('left'), padR = outPad('right'), padT = outPad('top')
+  // a closet recess sits outside the wall line too: widen the margin on its side by what does not fit in it
+  const closetPad = (wall: Wall) => Math.max(0, ...(room.closets ?? []).filter((c) => c.wall === wall).map((c) => c.depth + 10 - M))
+  const padL = Math.max(outPad('left'), closetPad('left')), padR = Math.max(outPad('right'), closetPad('right')), padT = Math.max(outPad('top'), closetPad('top'))
+  // a recess on the front wall pushes the parking strip down (the store parks items past it too)
+  const padB = frontRecessPad(room)
+  const W = room.w + M * 2
+  const H = room.d + M * 2 + PARK_H + padB
   const wallsWithOpenings = new Set<Wall>([...room.windows, ...room.doors].map((o) => o.wall))
 
   return (
@@ -103,6 +107,8 @@ export function FloorPlan() {
         {room.windows.map((win) => <Opening key={win.id} room={room} wall={win.wall} offset={win.offset} width={win.width} kind="window" />)}
         {/* door openings */}
         {room.doors.map((door) => <Opening key={door.id} room={room} wall={door.wall} offset={door.offset} width={door.width} kind="door" />)}
+        {/* closets: recess outside the wall, the opening, its doors and the floor they need */}
+        {(room.closets ?? []).map((c) => <ClosetPlan key={c.id} room={room} closet={c} />)}
 
         {/* dimension lines for the selection */}
         {sel && sel.inRoom && <DimLines item={sel} roomW={room.w} roomD={room.d} />}
@@ -141,8 +147,8 @@ export function FloorPlan() {
         <text x={room.w} y={room.d + 16} className="plan-dim" textAnchor="end">{room.w} cm</text>
         <text transform={`translate(${room.w + 16} 6) rotate(90)`} className="plan-dim">{room.d} cm</text>
 
-        {/* parking strip */}
-        <g transform={`translate(0 ${room.d + 30})`}>
+        {/* parking strip (pushed down past a closet recess on the front wall) */}
+        <g transform={`translate(0 ${room.d + 30 + padB})`}>
           <rect x={0} y={0} width={room.w} height={PARK_H - 30} rx={6} fill="none" stroke="#d8d0c7" strokeWidth={1} strokeDasharray="4 4" />
           <text x={room.w / 2} y={14} className="plan-label" textAnchor="middle">OUT OF THE ROOM</text>
           {items.filter((i) => !i.inRoom).length === 0 && (
@@ -156,7 +162,7 @@ export function FloorPlan() {
         ))}
 
         {/* scale */}
-        <g transform={`translate(0 ${room.d + PARK_H + 8})`}>
+        <g transform={`translate(0 ${room.d + PARK_H + 8 + padB})`}>
           <line x1={0} y1={0} x2={100} y2={0} stroke="#3f3833" strokeWidth={1.2} />
           <line x1={0} y1={-3} x2={0} y2={3} stroke="#3f3833" strokeWidth={1.2} />
           <line x1={100} y1={-3} x2={100} y2={3} stroke="#3f3833" strokeWidth={1.2} />
@@ -185,6 +191,71 @@ function arcPath(hx: number, hy: number, r: number, leafDir: (deg: number) => [n
   const [mx, my] = leafDir(45)
   const cross = (x0 * my - y0 * mx)
   return `M ${hx + x0 * r} ${hy + y0 * r} A ${r} ${r} 0 0 ${cross > 0 ? 1 : 0} ${hx + x1 * r} ${hy + y1 * r}`
+}
+
+/**
+ * A closet on the plan: the recess drawn outside the wall line, the opening as a gap in the wall,
+ * the doors by type (hinged leaves with their arcs, bi-fold chevrons, sliding bars, or nothing)
+ * and a faint dashed rect for the floor that must stay clear in front of it.
+ */
+function ClosetPlan({ room, closet: c }: { room: Room; closet: Closet }) {
+  const { along, normal } = wallAxes(c.wall)
+  const [x0, y0] = wallPoint(room, c.wall, c.offset)
+  const recess = closetRecessRect(room, c)
+  const clear = closetClearance(room, c)
+  // local frame: origin at the opening's start on the wall line, u along the wall, v into the room
+  const pt = (u: number, v: number): [number, number] => [x0 + along[0] * u + normal[0] * v, y0 + along[1] * u + normal[1] * v]
+  const P = (u: number, v: number) => pt(u, v).join(' ')
+  const w = c.width
+  const half = w / 2
+  const wallHalf = 3
+  const horizontal = c.wall === 'top' || c.wall === 'bottom'
+  // label towards the back of the recess so it stays clear of the wall's own label
+  const [lx, ly] = pt(half, -Math.max(c.depth * 0.7, c.depth - 14) - wallHalf)
+  const labelRot = horizontal ? 0 : c.wall === 'left' ? -90 : 90
+  const [gx, gy] = pt(0, -4)
+  return (
+    <g className="closet">
+      {/* the recess beyond the wall (the wall stroke covers its inner edge) */}
+      <rect x={recess.x0} y={recess.y0} width={recess.x1 - recess.x0} height={recess.y1 - recess.y0} fill="#f6f1ea" stroke="#8f867d" strokeWidth={0.8}
+        transform={`translate(${-normal[0] * wallHalf} ${-normal[1] * wallHalf})`} />
+      {/* floor that stays free in front */}
+      <rect x={clear.rect.x0} y={clear.rect.y0} width={clear.rect.x1 - clear.rect.x0} height={clear.rect.y1 - clear.rect.y0} fill="#8f867d" fillOpacity={0.05} stroke="#c9bfb4" strokeWidth={0.8} strokeDasharray="3 3" />
+      {/* the opening: a gap in the wall */}
+      <rect x={horizontal ? gx : Math.min(gx, gx + normal[0] * 8)} y={horizontal ? Math.min(gy, gy + normal[1] * 8) : gy} width={horizontal ? w : 8} height={horizontal ? 8 : w} fill="#f6f1ea" />
+      <line x1={pt(0, -wallHalf)[0]} y1={pt(0, -wallHalf)[1]} x2={pt(0, wallHalf)[0]} y2={pt(0, wallHalf)[1]} stroke="#3f3833" strokeWidth={1.2} />
+      <line x1={pt(w, -wallHalf)[0]} y1={pt(w, -wallHalf)[1]} x2={pt(w, wallHalf)[0]} y2={pt(w, wallHalf)[1]} stroke="#3f3833" strokeWidth={1.2} />
+      {c.doors === 'hinged' && (
+        <g>
+          {/* two leaves, each half the width, hinged at the jambs and swinging into the room */}
+          <path d={`M ${P(half, 0)} A ${half} ${half} 0 0 ${arcSweep(along, normal) ? 1 : 0} ${P(0, half)}`} fill="none" stroke="#c9bfb4" strokeWidth={1} strokeDasharray="3 3" />
+          <path d={`M ${P(half, 0)} A ${half} ${half} 0 0 ${arcSweep(along, normal) ? 0 : 1} ${P(w, half)}`} fill="none" stroke="#c9bfb4" strokeWidth={1} strokeDasharray="3 3" />
+          <line x1={pt(0, 0)[0]} y1={pt(0, 0)[1]} x2={pt(0, half)[0]} y2={pt(0, half)[1]} stroke="#5c534b" strokeWidth={2} />
+          <line x1={pt(w, 0)[0]} y1={pt(w, 0)[1]} x2={pt(w, half)[0]} y2={pt(w, half)[1]} stroke="#5c534b" strokeWidth={2} />
+        </g>
+      )}
+      {c.doors === 'bifold' && (
+        <g>
+          {/* each half folds in two panels: a chevron from the jamb back to the track */}
+          <polyline points={`${P(0, 0)} ${P(w / 8, (w / 4) * 0.87)} ${P(w / 4, 0)}`} fill="none" stroke="#5c534b" strokeWidth={1.5} strokeLinejoin="round" />
+          <polyline points={`${P(w, 0)} ${P(w - w / 8, (w / 4) * 0.87)} ${P(w - w / 4, 0)}`} fill="none" stroke="#5c534b" strokeWidth={1.5} strokeLinejoin="round" />
+        </g>
+      )}
+      {c.doors === 'sliding' && (
+        <g>
+          {/* two panels on a track, overlapping in the middle */}
+          <line x1={pt(0, 1.6)[0]} y1={pt(0, 1.6)[1]} x2={pt(half + 4, 1.6)[0]} y2={pt(half + 4, 1.6)[1]} stroke="#5c534b" strokeWidth={2} />
+          <line x1={pt(half - 4, -1.6)[0]} y1={pt(half - 4, -1.6)[1]} x2={pt(w, -1.6)[0]} y2={pt(w, -1.6)[1]} stroke="#5c534b" strokeWidth={2} />
+        </g>
+      )}
+      <text transform={`translate(${lx} ${ly + (labelRot ? 0 : 2.5)}) rotate(${labelRot})`} className="plan-label" textAnchor="middle" dominantBaseline={labelRot ? 'middle' : undefined}>CLOSET</text>
+    </g>
+  )
+}
+
+/** Sweep flag for a quarter arc from the wall direction round to the room normal. */
+function arcSweep(along: [number, number], normal: [number, number]) {
+  return along[0] * normal[1] - along[1] * normal[0] > 0
 }
 
 function Opening({ room, wall, offset, width, kind }: { room: Room; wall: Wall; offset: number; width: number; kind: 'window' | 'door' }) {
