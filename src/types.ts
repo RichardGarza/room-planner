@@ -1,5 +1,6 @@
 export type Wall = 'top' | 'bottom' | 'left' | 'right'
-export type Rot = 0 | 90 | 180 | 270
+/** Rotation on the plan in degrees, clockwise, normalised to [0, 360). 0 / 90 / 180 / 270 are the axis-aligned cases. */
+export type Rot = number
 export type ItemKind =
   | 'bed'
   | 'chair'

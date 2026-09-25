@@ -11,6 +11,7 @@ import { CopyToRoom } from './CopyToRoom'
 import type { Check } from '../types'
 import { formatLength, formatRoomDims, formatSize, useUnits } from '../units'
 import { LengthInput } from './LengthInput'
+import { AngleInput } from './AngleInput'
 
 export function Sidebar() {
   const room = useStore((s) => s.room)
@@ -105,6 +106,7 @@ function SelectionCard({ id }: { id: string }) {
         <button className="chip" onClick={() => rotateItem(item.id, -90)} title="Rotate left">↺ 90°</button>
         <button className="chip" onClick={() => rotateItem(item.id, 90)} title="Rotate right">↻ 90°</button>
         <button className="chip" onClick={() => rotateItem(item.id, 180)} title="Turn around">⇄ 180°</button>
+        <AngleInput value={item.rot} onCommit={(deg) => { const s = useStore.getState(); s.snapshot(); s.setRotation(item.id, deg) }} />
       </div>
       <div className="dims-grid">
         <label>Width ({unit})<LengthInput value={item.w} min={5} max={600} onCommit={(w) => resizeItem(item.id, { w })} /></label>

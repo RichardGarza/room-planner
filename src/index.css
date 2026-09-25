@@ -196,3 +196,13 @@ h5 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spac
 .len-input .len-unit { padding: 0 8px 0 2px; font-size: 10px; color: var(--muted); font-weight: 700; }
 .len-input.bad { border-color: var(--bad); animation: shake 0.3s; }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+/* rotate handle on the plan and the angle field beside the rotate buttons */
+.rotate-handle { pointer-events: auto; }
+.rotate-handle.turning circle { filter: drop-shadow(0 0 2px rgba(242, 140, 40, 0.6)); }
+.angle-input { display: inline-flex; align-items: center; height: 26px; border: 1px solid var(--line); border-radius: 999px; background: #fbf9f6; overflow: hidden; }
+.angle-input input { width: 44px; min-width: 0; border: 0; background: transparent; padding: 0 2px 0 10px; font: inherit; font-size: 11px; font-weight: 700; color: var(--ink); text-align: right; -moz-appearance: textfield; appearance: textfield; }
+.angle-input input::-webkit-outer-spin-button, .angle-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.angle-input input:focus { outline: none; }
+.angle-input:focus-within { border-color: var(--pink); box-shadow: 0 0 0 2px var(--pink-soft); }
+.angle-input .angle-unit { padding: 0 9px 0 1px; font-size: 11px; color: var(--muted); font-weight: 700; }

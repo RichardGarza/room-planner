@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { closetClearance, closetRecessRect, doorSwing, footprint, frontRecessPad, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
+import { closetClearance, closetRecessRect, doorSwing, footprint, frontRecessPad, isAxisAligned, normalizeRot, rectOf, wallAxes, wallPoint, wallStripRect } from '../geometry'
 import { isRugKind } from '../placement'
 import { useStore } from '../store'
 import type { Closet, Door, Item, Room, Wall } from '../types'
@@ -97,10 +97,10 @@ export function FloorPlan() {
 
         {/* rugs first, then solid items */}
         {items.filter((i) => i.inRoom && isRugKind(i.kind)).map((it) => (
-          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} toRoom={toRoom} />
         ))}
         {items.filter((i) => i.inRoom && !isRugKind(i.kind)).map((it) => (
-          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} />
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} toRoom={toRoom} />
         ))}
 
         {/* door swings (an out-swinging door draws its arc outside the room) */}
@@ -163,7 +163,7 @@ export function FloorPlan() {
           )}
         </g>
         {items.filter((i) => !i.inRoom).map((it) => (
-          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} muted />
+          <PlanItem key={it.id} item={it} selected={it.id === selectedId} onDown={onDown} toRoom={toRoom} muted />
         ))}
 
         {/* scale */}
@@ -296,7 +296,9 @@ function WallText({ room, wall, t, text, dist = 14 }: { room: Room; wall: Wall; 
   )
 }
 
-function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boolean; onDown: (e: React.PointerEvent, it: Item) => void; muted?: boolean }) {
+type ToRoom = (e: React.PointerEvent) => { x: number; y: number }
+
+function PlanItem({ item, selected, onDown, toRoom, muted }: { item: Item; selected: boolean; onDown: (e: React.PointerEvent, it: Item) => void; toRoom: ToRoom; muted?: boolean }) {
   const { fw } = footprint(item)
   const unit = useUnits((s) => s.unit)
   const stroke = selected ? '#f28c28' : '#8f867d'
@@ -363,6 +365,94 @@ function PlanItem({ item, selected, onDown, muted }: { item: Item; selected: boo
       <text className="plan-item-dim" textAnchor="middle" y={fontSize} fontSize={fontSize * 0.7}>
         {formatLength(item.w, { unit, bare: true })}×{formatLength(item.d, { unit, bare: true })}
       </text>
+      {selected && <RotateHandle item={item} toRoom={toRoom} />}
+    </g>
+  )
+}
+
+/** how far the rotate handle sits above the item's top edge, and its size (plan cm) */
+const HANDLE_STEM = 16
+const HANDLE_R = 7
+/** the handle snaps to these steps, and to a quarter turn when this close to one, unless Shift is held */
+const SNAP_STEP = 15
+const SNAP_90 = 6
+
+/**
+ * A small circle on a stem above the item's top edge (in its own turned frame). Dragging it turns
+ * the item about its centre to follow the pointer, in 15° steps that also snap to the quarter
+ * turns; Shift turns freely. One undo step per drag. Drawn inside the PlanItem so it moves with it,
+ * and stops its pointer events so grabbing the handle never starts a move.
+ */
+function RotateHandle({ item, toRoom }: { item: Item; toRoom: ToRoom }) {
+  const setRotation = useStore((s) => s.setRotation)
+  const snapshot = useStore((s) => s.snapshot)
+  const [turning, setTurning] = useState(false)
+  const stem = item.d / 2 + HANDLE_STEM
+  const cy = -(stem + HANDLE_R)
+  const angleFrom = (e: React.PointerEvent) => {
+    const p = toRoom(e)
+    // the handle points "up" from the item, which is a plan angle of rot − 90°
+    const raw = (Math.atan2(p.y - item.y, p.x - item.x) * 180) / Math.PI + 90
+    if (e.shiftKey) return normalizeRot(Math.round(raw))
+    const q = Math.round(raw / 90) * 90
+    if (Math.abs(raw - q) <= SNAP_90) return normalizeRot(q)
+    return normalizeRot(Math.round(raw / SNAP_STEP) * SNAP_STEP)
+  }
+  const onDown = (e: React.PointerEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    snapshot()
+    setTurning(true)
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  }
+  const onMove = (e: React.PointerEvent) => {
+    if (!turning) return
+    e.stopPropagation()
+    const rot = angleFrom(e)
+    if (rot !== item.rot) setRotation(item.id, rot)
+  }
+  const onUp = (e: React.PointerEvent) => {
+    if (!turning) return
+    e.stopPropagation()
+    setTurning(false)
+  }
+  // the label stays upright: place it in the item's unturned frame, just past the handle
+  const a = (item.rot * Math.PI) / 180
+  const reach = stem + 2 * HANDLE_R + 6
+  const lx = Math.sin(a) * reach
+  const ly = -Math.cos(a) * reach
+  return (
+    <g className={`rotate-handle${turning ? ' turning' : ''}`}>
+      <g transform={`rotate(${item.rot})`}>
+        <line x1={0} y1={-item.d / 2} x2={0} y2={-stem} stroke="#f28c28" strokeWidth={1} />
+        <g
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={onUp}
+          onLostPointerCapture={() => setTurning(false)}
+          style={{ cursor: turning ? 'grabbing' : 'grab', touchAction: 'none' }}
+        >
+          {/* a wider invisible target so the handle is easy to grab */}
+          <circle cy={cy} r={HANDLE_R * 2} fill="transparent" />
+          <circle cy={cy} r={HANDLE_R} fill="#fff" stroke="#f28c28" strokeWidth={1.4} />
+          {/* curved arrow glyph */}
+          <path
+            d={`M ${-HANDLE_R * 0.55} ${cy + HANDLE_R * 0.25} A ${HANDLE_R * 0.55} ${HANDLE_R * 0.55} 0 1 1 ${HANDLE_R * 0.55} ${cy + HANDLE_R * 0.25}`}
+            fill="none" stroke="#f28c28" strokeWidth={1.2} strokeLinecap="round"
+          />
+          <path
+            d={`M ${HANDLE_R * 0.55 - 2.2} ${cy + HANDLE_R * 0.25 - 1.6} L ${HANDLE_R * 0.55} ${cy + HANDLE_R * 0.25} L ${HANDLE_R * 0.55 + 1.6} ${cy + HANDLE_R * 0.25 - 2.4}`}
+            fill="none" stroke="#f28c28" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round"
+          />
+        </g>
+      </g>
+      {turning && (
+        <g transform={`translate(${lx} ${ly})`} pointerEvents="none">
+          <rect x={-14} y={-6} width={28} height={12} rx={3} fill="#fff" stroke="#f28c28" strokeWidth={0.6} />
+          <text className="dim-text" textAnchor="middle" y={3}>{Math.round(item.rot)}°</text>
+        </g>
+      )}
     </g>
   )
 }
@@ -377,6 +467,10 @@ function DimLines({ item, roomW, roomD }: { item: Item; roomW: number; roomD: nu
   const vert = top <= bottom ? { y1: 0, y2: r.y0, v: top } : { y1: r.y1, y2: roomD, v: bottom }
   return (
     <g className="dims">
+      {/* a turned item: the numbers measure its bounding box, so show that box */}
+      {!isAxisAligned(item.rot) && (
+        <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#e5407a" strokeWidth={0.6} strokeDasharray="2 2" pointerEvents="none" />
+      )}
       {horiz.v > 2 && (
         <g>
           <line x1={horiz.x1} y1={cy} x2={horiz.x2} y2={cy} stroke="#e5407a" strokeWidth={1.2} />

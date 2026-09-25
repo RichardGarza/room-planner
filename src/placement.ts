@@ -1,4 +1,4 @@
-import { closetClearance, doorSwing, footprint, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
+import { closetClearance, doorSwing, footprint, intersects, isRugKind, polygonIntersectsRect, polygonOf, rectOf, wallLength, wallStripRect } from './geometry'
 export { isRugKind }
 import type { Door, Item, ItemKind, Rect, Room, Rot, Wall } from './types'
 
@@ -38,7 +38,8 @@ const BACK_TO_WALL: Record<Wall, Rot> = { top: 0, right: 90, bottom: 180, left: 
  */
 export function findFreeSpot(room: Room, items: Item[], w: number, d: number, opts: PlacementOptions = {}): Spot {
   const prefer = opts.prefer ?? 'wall'
-  const solid = items.filter((i) => i.inRoom && !isRugKind(i.kind)).map(rectOf)
+  // what is already there, by its turned outline so a piece angled into a corner does not block the whole box around it
+  const solid = items.filter((i) => i.inRoom && !isRugKind(i.kind)).map(polygonOf)
   const closets = (room.closets ?? []).map((c) => closetClearance(room, c).rect)
   const soft = softBlockers(room, opts.h)
   const keepsGap = prefer === 'wall' && opts.kind !== 'bed' && opts.kind !== 'nightstand' && !(opts.kind && isRugKind(opts.kind))
@@ -46,7 +47,7 @@ export function findFreeSpot(room: Room, items: Item[], w: number, d: number, op
 
   const isFree = (rect: Rect, strict: boolean, bedGap: boolean) =>
     rect.x0 >= -0.01 && rect.y0 >= -0.01 && rect.x1 <= room.w + 0.01 && rect.y1 <= room.d + 0.01 &&
-    !solid.some((s) => intersects(rect, s)) &&
+    !solid.some((s) => polygonIntersectsRect(s, rect)) &&
     !doorBlocks(room, rect) &&
     !closets.some((c) => intersects(rect, c)) &&
     (!strict || !soft.some((s) => intersects(rect, s))) &&
