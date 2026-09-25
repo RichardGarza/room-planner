@@ -4,7 +4,8 @@ import type { Item, Room, RoomDoc } from './types'
 /** inches → whole centimetres */
 export const inch = (v: number) => Math.round(v * 2.54)
 
-const SEED_TIME = '2026-09-24T12:00:00.000Z'
+/** Bump when the seed changes so unedited copies in existing libraries are refreshed. */
+const SEED_TIME = '2026-09-25T00:00:00.000Z'
 
 /**
  * Forest's Room — a nursery measured in inches with a tape:

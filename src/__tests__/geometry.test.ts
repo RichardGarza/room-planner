@@ -130,7 +130,7 @@ describe('access space', () => {
     expect(accessRules.dresser).toMatchObject({ depth: 45 })
     expect(accessRules.wardrobe).toMatchObject({ depth: 65 })
     expect(accessRules.bookcase).toMatchObject({ depth: 40 })
-    expect(accessRules.desk).toMatchObject({ depth: 55 })
+    expect(accessRules.desk).toMatchObject({ depth: 65 })
     expect(accessRules.sofa).toMatchObject({ depth: 60 })
     expect(accessRules.chair).toBeNull()
     expect(accessRuleFor({ kind: 'table', w: 160, d: 90 })).toMatchObject({ depth: 60, faces: 'all', mode: 'all' })

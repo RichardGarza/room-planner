@@ -139,7 +139,12 @@ export function exampleDoc(name = defaultRoom.name, group = 'Examples'): RoomDoc
  * whose id is missing and whose flag is unset is saved and flagged, so each appears once per browser
  * and deleting it never brings it back. The flags live in localStorage even in the Mac app.
  */
-const seedBuilders: (() => RoomDoc)[] = [() => ({ ...exampleDoc(), id: EXAMPLE_ID }), forestsRoom]
+/** Bump when the example room's contents change so unedited seeded copies are refreshed. */
+const EXAMPLE_SEED_TIME = '2026-09-25T00:00:00.000Z'
+const seedBuilders: (() => RoomDoc)[] = [
+  () => ({ ...exampleDoc(), id: EXAMPLE_ID, createdAt: EXAMPLE_SEED_TIME, updatedAt: EXAMPLE_SEED_TIME }),
+  forestsRoom,
+]
 
 /** Add the seeds that are missing and not yet flagged; true when something was saved. */
 async function seedMissing(s: RoomStorage, list: RoomSummary[]): Promise<boolean> {
@@ -148,8 +153,14 @@ async function seedMissing(s: RoomStorage, list: RoomSummary[]): Promise<boolean
   let added = false
   for (const build of seedBuilders) {
     const doc = build()
+    const existing = list.find((r) => r.id === doc.id)
+    // a seeded room the person never edited is refreshed when the seed itself changes
+    if (existing && existing.updatedAt === existing.createdAt && existing.updatedAt !== doc.updatedAt) {
+      await s.save(doc)
+      added = true
+    }
     if (flagGet(seedKey(doc.id))) continue
-    if (!list.some((r) => r.id === doc.id)) {
+    if (!existing) {
       await s.save(doc)
       added = true
     }

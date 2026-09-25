@@ -361,7 +361,7 @@ export const accessRules: Record<ItemKind, AccessRule | null> = {
   wardrobe: { depth: 65, faces: 'front', mode: 'all', reason: 'doors' },
   bookcase: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
   shelf: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
-  desk: { depth: 55, faces: 'front', mode: 'all', reason: 'chair' },
+  desk: { depth: 65, faces: 'front', mode: 'all', reason: 'chair' },
   sofa: { depth: 60, faces: 'front', mode: 'all', reason: 'legroom' },
   /** dining tables (w ≥ 120) need 60 cm on every side; smaller tables 45 cm on at least one side */
   table: { depth: 60, faces: 'all', mode: 'all', reason: 'seats' },
@@ -406,7 +406,7 @@ export function faceZone(item: Pick<Item, 'x' | 'y' | 'rot' | 'w' | 'd'>, face: 
 /**
  * The floor in front of a piece that must stay free so its drawers, doors or chair can move:
  * the strip beyond its front edge (local +d), turned with the item. `depth` defaults to the
- * kind's access rule (45 cm for a dresser, 65 for a wardrobe, 75 for a desk, …).
+ * kind's access rule (45 cm for a dresser, 65 for a wardrobe, 65 for a desk, …).
  */
 export function frontZone(item: Pick<Item, 'x' | 'y' | 'rot' | 'w' | 'd' | 'kind'>, depth = accessRuleFor(item)?.depth ?? 45): Polygon {
   return faceZone(item, 'front', depth)

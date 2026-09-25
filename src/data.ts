@@ -62,23 +62,24 @@ export const presetLayouts: Layout[] = [
     id: 'B',
     name: 'B · Bed along the left wall',
     description:
-      'Bed moves to the left wall under the shelf. Desk, chair and dresser swap to the right wall so the window stays clear.',
+      'Bed moves to the left wall with its head toward the window. Desk, chair and wardrobe take the right wall so the window stays clear; the dresser has to go elsewhere.',
     placements: {
       ...base,
-      bed: { x: 82, y: 185, rot: 0, inRoom: true },
+      bed: { x: 82, y: 155, rot: 0, inRoom: true },
       shelf: { x: 250, y: 30, rot: 90, inRoom: true },
       desk: { x: 245, y: 95, rot: 90, inRoom: true },
-      chair: { x: 200, y: 95, rot: 0, inRoom: true },
-      dresser: { x: 246, y: 224, rot: 90, inRoom: true },
+      chair: { x: 205, y: 95, rot: 0, inRoom: true },
+      dresser: { x: 24, y: 224, rot: 270, inRoom: false },
       rug: { x: 190, y: 250, rot: 0, inRoom: true },
       bookcase: { x: 32, y: 345, rot: 180, inRoom: true },
+      wardrobe: { x: 241, y: 320, rot: 90, inRoom: true },
     },
   },
   {
     id: 'C',
     name: 'C · Bed across under the window',
     description:
-      'Bed turned sideways with the headboard against the window wall. Frees the long walls but covers part of the window, and the shelf has to go.',
+      'Bed turned sideways with the headboard against the window wall. Frees the long walls but covers part of the window, and the shelf and bookcase have to go.',
     placements: {
       ...base,
       bed: { x: 135, y: 82, rot: 90, inRoom: true },
@@ -87,7 +88,7 @@ export const presetLayouts: Layout[] = [
       chair: { x: 68, y: 225, rot: 0, inRoom: true },
       dresser: { x: 246, y: 258, rot: 90, inRoom: true },
       rug: { x: 140, y: 265, rot: 0, inRoom: true },
-      bookcase: { x: 240, y: 354, rot: 180, inRoom: true },
+      bookcase: { x: 240, y: 354, rot: 180, inRoom: false },
       wardrobe: { x: 29, y: 318, rot: 270, inRoom: true },
     },
   },
