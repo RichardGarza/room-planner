@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { findPreset } from '../catalog'
 import { isAccessCheck, runChecks } from '../checks'
 import { makeEmptyRoom } from '../data'
-import { accessAllows, accessZones, areCompanions, closetClearance, doorSwing, faceZone, isRugKind, itemsGap, itemsIntersect, polygonIntersectsRect, polygonOf, polygonsIntersect, rectDistance, rectOf, wallStripRect } from '../geometry'
+import { accessAllows, accessZones, areCompanions, closetClearance, doorSwing, faceZone, frontZone, isRugKind, itemsGap, itemsIntersect, polygonIntersectsRect, polygonOf, polygonsIntersect, rectDistance, rectOf, wallStripRect } from '../geometry'
 import { migrateDoc } from '../migrate'
 import { forestsRoom } from '../seeds'
 import { CLOSET_MARGIN, DOOR_MARGIN, DOOR_PREFER, explainScore, HEAD_DOOR_REACH, MIN_GAP, suggestLayouts } from '../suggest'
@@ -425,7 +425,7 @@ describe('(b) a fresh 305 × 366 room with the starter basics plus a nightstand,
       // the chair sits at the desk, in front of it
       const desk = placed.find((i) => i.id === 'desk')!, chair = placed.find((i) => i.id === 'chair')!
       expect(Math.hypot(desk.x - chair.x, desk.y - chair.y), `chair at the desk in ${l.name}`).toBeLessThanOrEqual(70)
-      expect(polygonsIntersect(polygonOf(chair), faceZone(desk, 'front', 75)), `chair in front of the desk in ${l.name}`).toBe(true)
+      expect(polygonsIntersect(polygonOf(chair), frontZone(desk)), `chair in front of the desk in ${l.name}`).toBe(true)
       // dresser and bookcase fronts face open floor inside the room
       for (const id of ['dresser', 'billy']) {
         const it = placed.find((i) => i.id === id)!
@@ -498,7 +498,7 @@ describe('(c) a 400 × 500 bedroom with ten pieces', () => {
       expect(usableSides(room, bed, solids), `both sides of the bed reachable in ${l.name}`).toBe(2)
       for (const id of ['ns1', 'ns2']) expect(gap(placed.find((i) => i.id === id)!, bed), `${id} beside the bed in ${l.name}`).toBeLessThanOrEqual(1)
       const desk = placed.find((i) => i.id === 'desk')!, chair = placed.find((i) => i.id === 'chair')!
-      expect(polygonsIntersect(polygonOf(chair), faceZone(desk, 'front', 75)), `chair at the desk in ${l.name}`).toBe(true)
+      expect(polygonsIntersect(polygonOf(chair), frontZone(desk)), `chair at the desk in ${l.name}`).toBe(true)
       const armchair = placed.find((i) => i.id === 'armchair')!, side = placed.find((i) => i.id === 'side')!
       expect(gap(armchair, side), `side table beside the armchair in ${l.name}`).toBeLessThanOrEqual(5)
       for (const id of ['dresser', 'pax']) {

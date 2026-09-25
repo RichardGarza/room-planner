@@ -1,35 +1,5 @@
 import { isAccessCheck, runChecks } from './checks'
-import {
-  accessRuleFor,
-  accessAllows,
-  accessZones,
-  areCompanions,
-  closetClearance,
-  doorSwing,
-  footprint,
-  fractionInRoom,
-  frontZone,
-  intersects,
-  isAxisAligned,
-  isRealBed,
-  isRugKind,
-  isSideTable,
-  itemsGap,
-  localToRoom,
-  overlapArea,
-  polygonBounds,
-  polygonDistance,
-  polygonIntersectsRect,
-  polygonOf,
-  rectDistance,
-  rectOf,
-  rectToPolygon,
-  snap90,
-  wallLength,
-  wallStripRect,
-  type AccessRule,
-  type Polygon,
-} from './geometry'
+import { accessAllows, accessRuleFor, accessZones, areCompanions, closetClearance, doorSwing, footprint, fractionInRoom, frontZone, intersects, isAxisAligned, isRealBed, isRugKind, isSideTable, itemsGap, localToRoom, overlapArea, polygonBounds, polygonDistance, polygonIntersectsRect, polygonOf, rectDistance, rectOf, rectToPolygon, snap90, type AccessRule, type Polygon, wallLength, wallStripRect } from './geometry'
 import type { Check, Item, ItemKind, ItemPlacement, Layout, Rect, Room, Rot, Wall } from './types'
 
 /**
@@ -709,7 +679,7 @@ function evaluate(ctx: Ctx, arr: Arrangement, item: Item, spot: Spot, ignore?: I
   // the chair in front of a desk must not end up in the door swing or in someone else's access space,
   // and wants its own breathing room from the neighbours too
   if (item.kind === 'desk') {
-    const chairArea = polygonBounds(frontZone(at(item, spot), 60))
+    const chairArea = polygonBounds(frontZone(at(item, spot), accessRuleFor(item)?.depth ?? 60))
     if (doorBlocks(room, chairArea) || doorSwingGap(room, chairArea, DOOR_MARGIN) < DOOR_MARGIN) score -= 5
     if (arr.zones.some((z) => z.hard && z.host && !accessAllows(z.host, { kind: 'chair', w: 50, d: 50, h: 90 }) && hits(chairArea, z))) score -= 6
     const seat = polygonBounds(frontZone(at(item, spot), 40))
