@@ -153,8 +153,9 @@ function rotOf(v: unknown): Rot {
 
 /**
  * Repair one stored item: string id and name, finite clamped sizes and position, a known kind
- * (else "box"), a valid rotation, boolean inRoom, optional string note and a colour string.
- * Returns null when it is not an object at all. `at` is the fallback position (the room centre).
+ * (else "box"), a valid rotation, boolean inRoom, optional string note, a colour string and the
+ * locked flag when it is set. Returns null when it is not an object at all. `at` is the fallback
+ * position (the room centre).
  */
 export function migrateItem(raw: unknown, at: { x: number; y: number }): Unkeyed<Item> | null {
   if (!raw || typeof raw !== 'object') return null
@@ -174,6 +175,7 @@ export function migrateItem(raw: unknown, at: { x: number; y: number }): Unkeyed
     inRoom: boolOf(o.inRoom, true),
   }
   if (typeof o.note === 'string' && o.note) item.note = o.note
+  if (o.locked === true) item.locked = true
   return item
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultItems, defaultRoom, makeEmptyRoom, presetLayouts } from '../data'
-import { doorClearance, intersects, rectOf } from '../geometry'
+import { doorClearance, frontZone, intersects, polygonOf, polygonsIntersect, rectOf } from '../geometry'
 import { findFreeSpot, isRugKind, type Spot } from '../placement'
 import type { Item, Rect, Room } from '../types'
 
@@ -141,5 +141,33 @@ describe('isRugKind', () => {
     expect(isRugKind('rug')).toBe(true)
     expect(isRugKind('rugRect')).toBe(true)
     expect(isRugKind('bed')).toBe(false)
+  })
+})
+
+describe('access space in findFreeSpot', () => {
+  it('keeps a new piece out of the space in front of a dresser, and its own front facing the room', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    // a dresser on the left wall, drawers facing right: x 0..48 needs x 48..93 free along y 120..280
+    const dresser: Item = { ...box('dresser', 160, 48, 24, 200, 85, 'dresser'), rot: 270 }
+    const spot = findFreeSpot(room, [dresser], 80, 28, { h: 202, kind: 'bookcase' })
+    const it = { ...placed(spot, 80, 28, 202), kind: 'bookcase' as const }
+    const r = rectOf(it)
+    expect(spot.fits).toBe(true)
+    expect(r.x0 < 93 && r.y1 > 120 && r.y0 < 280, 'clear of the drawers').toBe(false)
+    // its own shelves face into the room: the 40 cm strip in front is inside the room and clear
+    const front = frontZone(it)
+    for (const [x, y] of front) {
+      expect(x).toBeGreaterThanOrEqual(-0.01)
+      expect(y).toBeGreaterThanOrEqual(-0.01)
+      expect(x).toBeLessThanOrEqual(room.w + 0.01)
+      expect(y).toBeLessThanOrEqual(room.d + 0.01)
+    }
+    expect(polygonsIntersect(front, polygonOf(dresser))).toBe(false)
+  })
+  it('still lets the desk chair go in front of the desk', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    const desk: Item = box('desk', 100, 50, 150, 25, 75, 'desk')
+    const spot = findFreeSpot(room, [desk], 56, 56, { h: 86, kind: 'chair' })
+    expect(spot.fits).toBe(true)
   })
 })

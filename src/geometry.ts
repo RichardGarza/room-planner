@@ -335,3 +335,176 @@ export function closetLabel(i: number, count: number) {
 export function wallLabel(w: Wall) {
   return { top: 'window wall', bottom: 'door wall', left: 'left wall', right: 'right wall' }[w]
 }
+
+/* ---------- access space: the floor a piece needs in front of it ---------- */
+
+/** Which faces of a piece need a free strip, and whether every listed face needs one or any one will do. */
+export interface AccessRule {
+  /** how deep the free strip is (cm) */
+  depth: number
+  /** the front (+d side, where the drawers and doors are), every side, or the two long sides */
+  faces: 'front' | 'all' | 'long'
+  /** 'all': every listed face must be free; 'any': one free face is enough */
+  mode: 'all' | 'any'
+  /** what the space is for, e.g. "drawers" */
+  reason: string
+}
+
+/**
+ * How much floor each kind of furniture needs in front of it to be usable: drawers and doors
+ * have to open, a chair has to pull out, legs need room, a bed needs one side to get in.
+ * Tables depend on their size (see accessRuleFor); chairs, plants, boxes and rugs need nothing.
+ */
+export const accessRules: Record<ItemKind, AccessRule | null> = {
+  dresser: { depth: 45, faces: 'front', mode: 'all', reason: 'drawers' },
+  nightstand: { depth: 45, faces: 'front', mode: 'all', reason: 'drawers' },
+  wardrobe: { depth: 65, faces: 'front', mode: 'all', reason: 'doors' },
+  bookcase: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
+  shelf: { depth: 40, faces: 'front', mode: 'all', reason: 'shelves' },
+  desk: { depth: 75, faces: 'front', mode: 'all', reason: 'chair' },
+  sofa: { depth: 60, faces: 'front', mode: 'all', reason: 'legroom' },
+  /** dining tables (w ≥ 120) need 60 cm on every side; smaller tables 45 cm on at least one side */
+  table: { depth: 60, faces: 'all', mode: 'all', reason: 'seats' },
+  bed: { depth: 60, faces: 'long', mode: 'any', reason: 'getting in' },
+  chair: null,
+  plant: null,
+  box: null,
+  rug: null,
+  rugRect: null,
+}
+
+/** The access rule for one piece (tables depend on their size). */
+export function accessRuleFor(item: Pick<Item, 'kind' | 'w' | 'd'>): AccessRule | null {
+  if (item.kind === 'table') return item.w >= 120 ? accessRules.table : { depth: 45, faces: 'all', mode: 'any', reason: 'reach' }
+  return accessRules[item.kind]
+}
+
+/** A point given in the item's own frame (x across its width, y front-to-back, origin at its centre), in room coordinates. */
+export function localToRoom(item: Pick<Item, 'x' | 'y' | 'rot'>, lx: number, ly: number): [number, number] {
+  const [c, s] = rotTrig(item.rot)
+  return [item.x + lx * c - ly * s, item.y + lx * s + ly * c]
+}
+
+/** A rect in the item's own frame, turned with it: corners in the same winding as polygonOf. */
+export function localPolygon(item: Pick<Item, 'x' | 'y' | 'rot'>, lx0: number, ly0: number, lx1: number, ly1: number): Polygon {
+  return [localToRoom(item, lx0, ly0), localToRoom(item, lx1, ly0), localToRoom(item, lx1, ly1), localToRoom(item, lx0, ly1)]
+}
+
+export type Face = 'front' | 'back' | 'left' | 'right'
+
+/** The strip `depth` cm beyond one face of a piece, turned with it. Front is the +d side. */
+export function faceZone(item: Pick<Item, 'x' | 'y' | 'rot' | 'w' | 'd'>, face: Face, depth: number): Polygon {
+  const hw = item.w / 2, hd = item.d / 2
+  switch (face) {
+    case 'front': return localPolygon(item, -hw, hd, hw, hd + depth)
+    case 'back': return localPolygon(item, -hw, -hd - depth, hw, -hd)
+    case 'left': return localPolygon(item, -hw - depth, -hd, -hw, hd)
+    case 'right': return localPolygon(item, hw, -hd, hw + depth, hd)
+  }
+}
+
+/**
+ * The floor in front of a piece that must stay free so its drawers, doors or chair can move:
+ * the strip beyond its front edge (local +d), turned with the item. `depth` defaults to the
+ * kind's access rule (45 cm for a dresser, 65 for a wardrobe, 75 for a desk, …).
+ */
+export function frontZone(item: Pick<Item, 'x' | 'y' | 'rot' | 'w' | 'd' | 'kind'>, depth = accessRuleFor(item)?.depth ?? 45): Polygon {
+  return faceZone(item, 'front', depth)
+}
+
+export interface AccessZone {
+  face: Face
+  poly: Polygon
+  /** the polygon's bounding box (the polygon itself when the item stands square) */
+  rect: Rect
+}
+
+/** Every strip the piece's access rule asks for, with the rule; nothing for kinds that need none. */
+export function accessZones(item: Pick<Item, 'x' | 'y' | 'rot' | 'w' | 'd' | 'kind'>): { rule: AccessRule; zones: AccessZone[] } | null {
+  const rule = accessRuleFor(item)
+  if (!rule) return null
+  const faces: Face[] =
+    rule.faces === 'front' ? ['front'] : rule.faces === 'all' ? ['front', 'back', 'left', 'right'] : item.d >= item.w ? ['left', 'right'] : ['front', 'back']
+  const zones = faces.map((face) => {
+    const poly = faceZone(item, face, rule.depth)
+    return { face, poly, rect: polygonBounds(poly) }
+  })
+  return { rule, zones }
+}
+
+/** A nightstand, or a small table (≤ 60 cm each way) that belongs at the end of a sofa. */
+export function isSideTable(item: Pick<Item, 'kind' | 'w' | 'd'>) {
+  return item.kind === 'nightstand' || (item.kind === 'table' && item.w <= 60 && item.d <= 60)
+}
+
+/** Beds people climb into (85 cm and wider); anything narrower is a crib or a cot. */
+export function isRealBed(item: Pick<Item, 'kind' | 'w' | 'd'>) {
+  return item.kind === 'bed' && Math.min(item.w, item.d) >= 85
+}
+
+/**
+ * Pieces that belong right next to each other, so no walking gap is expected between them:
+ * a nightstand and a bed, a chair and its desk or table, a side table and a sofa or armchair,
+ * and a rug with anything (it lies underneath).
+ */
+export function areCompanions(a: Pick<Item, 'kind' | 'w' | 'd'>, b: Pick<Item, 'kind' | 'w' | 'd'>) {
+  if (isRugKind(a.kind) || isRugKind(b.kind)) return true
+  const pair = (x: Pick<Item, 'kind' | 'w' | 'd'>, y: Pick<Item, 'kind' | 'w' | 'd'>) =>
+    (x.kind === 'nightstand' && y.kind === 'bed') ||
+    (x.kind === 'chair' && (y.kind === 'desk' || y.kind === 'table')) ||
+    (isSideTable(x) && y.kind === 'sofa')
+  return pair(a, b) || pair(b, a)
+}
+
+/**
+ * May `guest` stand in `host`'s access space? A chair at its desk or table, a side table or a
+ * low (coffee) table by a sofa, a nightstand by a bed.
+ */
+export function accessAllows(host: Pick<Item, 'kind' | 'w' | 'd' | 'h'>, guest: Pick<Item, 'kind' | 'w' | 'd' | 'h'>) {
+  if (host.kind === 'sofa' && guest.kind === 'table' && guest.h <= 60) return true
+  if (guest.kind === 'sofa' && host.kind === 'table' && host.h <= 60) return true
+  return areCompanions(host, guest)
+}
+
+/** Gap between two rects (0 when they touch or overlap): the straight-line distance between their closest points. */
+export function rectDistance(a: Rect, b: Rect) {
+  const dx = Math.max(0, Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1))
+  const dy = Math.max(0, Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1))
+  return Math.hypot(dx, dy)
+}
+
+function pointSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const ex = bx - ax, ey = by - ay
+  const len2 = ex * ex + ey * ey
+  const t = len2 < 1e-9 ? 0 : clamp(((px - ax) * ex + (py - ay) * ey) / len2, 0, 1)
+  return Math.hypot(px - (ax + t * ex), py - (ay + t * ey))
+}
+
+/** Gap between two convex polygons (0 when they overlap): the shortest corner-to-edge distance. */
+export function polygonDistance(a: Polygon, b: Polygon) {
+  if (polygonsIntersect(a, b, 0)) return 0
+  let best = Infinity
+  for (const [p, q] of [[a, b], [b, a]]) {
+    for (const [px, py] of p) {
+      for (let i = 0; i < q.length; i++) {
+        const [ax, ay] = q[i], [bx, by] = q[(i + 1) % q.length]
+        const d = pointSegmentDistance(px, py, ax, ay, bx, by)
+        if (d < best) best = d
+      }
+    }
+  }
+  return best
+}
+
+/** Gap between two items' outlines (0 when they touch or overlap); exact for turned pieces. */
+export function itemsGap(a: Item, b: Item) {
+  if (isAxisAligned(a.rot) && isAxisAligned(b.rot)) return rectDistance(rectOf(a), rectOf(b))
+  return polygonDistance(polygonOf(a), polygonOf(b))
+}
+
+/** How much of a rect lies inside the room (0..1). */
+export function fractionInRoom(room: Pick<Room, 'w' | 'd'>, r: Rect) {
+  const area = (r.x1 - r.x0) * (r.y1 - r.y0)
+  if (area <= 0) return 1
+  return overlapArea(r, { x0: 0, y0: 0, x1: room.w, y1: room.d }) / area
+}

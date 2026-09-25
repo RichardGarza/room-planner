@@ -94,8 +94,18 @@ interface State extends Settings {
   docState: () => Pick<RoomDoc, 'room' | 'items' | 'layouts' | 'settings'>
 }
 
+/** Placements applied to the items; a locked piece keeps its own position, angle and in/out state. */
 function applyPlacements(items: Item[], placements: Record<string, ItemPlacement>): Item[] {
-  return items.map((it) => (placements[it.id] ? { ...it, ...placements[it.id] } : it))
+  return items.map((it) => (placements[it.id] && !it.locked ? { ...it, ...placements[it.id] } : it))
+}
+
+/** A saved layout's full item list, with every piece that is locked right now kept exactly where it is. */
+function keepLocked(current: Item[], saved: Item[]): Item[] {
+  const locked = new Map(current.filter((i) => i.locked).map((i) => [i.id, i]))
+  return saved.map((it) => {
+    const l = locked.get(it.id)
+    return l ? { ...it, x: l.x, y: l.y, rot: l.rot, inRoom: l.inRoom, locked: true } : it
+  })
 }
 
 /** Items that are out of the room sit in a parking strip below the plan (pushed down past a front-wall closet). */
@@ -351,7 +361,7 @@ export const useStore = create<State>((set, get) => ({
   moveItem: (id, x, y) =>
     set((s) => {
       const it = s.items.find((i) => i.id === id)
-      if (!it) return s
+      if (!it || it.locked) return s
       const pos = it.inRoom ? clampToRoom(s.room, it, x, y) : { x, y }
       const items = s.items.map((i) => (i.id === id ? { ...i, x: Math.round(pos.x), y: Math.round(pos.y) } : i))
       return { items, activeLayoutId: null }
@@ -360,7 +370,7 @@ export const useStore = create<State>((set, get) => ({
   dragTo: (id, x, y) =>
     set((s) => {
       const it = s.items.find((i) => i.id === id)
-      if (!it) return s
+      if (!it || it.locked) return s
       const inRoom = y <= s.room.d + 15
       const pad = frontRecessPad(s.room)
       const pos = inRoom ? clampToRoom(s.room, it, x, y) : { x: clamp(x, 0, s.room.w), y: clamp(y, s.room.d + 30 + pad, s.room.d + 150 + pad) }
@@ -372,6 +382,7 @@ export const useStore = create<State>((set, get) => ({
 
   rotateItem: (id, delta) =>
     set((s) => {
+      if (s.items.find((i) => i.id === id)?.locked) return s
       const items = s.items.map((i) => {
         if (i.id !== id) return i
         const next = { ...i, rot: normalizeRot(i.rot + delta) }
@@ -382,6 +393,7 @@ export const useStore = create<State>((set, get) => ({
 
   setRotation: (id, deg) =>
     set((s) => {
+      if (s.items.find((i) => i.id === id)?.locked) return s
       const items = s.items.map((i) => {
         if (i.id !== id) return i
         const next = { ...i, rot: normalizeRot(deg) }
@@ -401,7 +413,7 @@ export const useStore = create<State>((set, get) => ({
     }),
 
   toggleLock: (id) =>
-    set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, locked: !i.locked } : i)), ...pushHistory(s) })),
+    set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, locked: !i.locked } : i)), suggestionsStale: true, ...pushHistory(s) })),
 
   updateItem: (id, patch) =>
     set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, ...patch } : i)), activeLayoutId: null, ...pushHistory(s) })),
@@ -475,7 +487,7 @@ export const useStore = create<State>((set, get) => ({
 
   applyLayout: (layout) =>
     set((s) => ({
-      items: layout.items ? fitAll(s.room, layout.items) : park(s.room, applyPlacements(s.items, layout.placements)),
+      items: layout.items ? fitAll(s.room, keepLocked(s.items, layout.items)) : park(s.room, applyPlacements(s.items, layout.placements)),
       activeLayoutId: layout.id,
       selectedId: null,
       ...pushHistory(s),
