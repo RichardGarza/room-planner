@@ -1,10 +1,12 @@
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import { wallLength } from '../geometry'
 import { useStore } from '../store'
 import type { Door, Opening, Radiator as RadiatorSpec, Room, Wall } from '../types'
-import { cm, WALL_T } from './util'
+import { Outside } from './Outside'
+import { ceilingMaps, fabricMaps, plasterMaps } from './textures'
+import { cm, mergedBoxes, profileAlongX, seeded, starShape, WALL_T, worldUvBox, type BoxSpec } from './util'
 
 /* ---------------------------------- shell --------------------------------- */
 
@@ -23,12 +25,65 @@ export function wallTransform(room: Room, wall: Wall): { position: [number, numb
   }
 }
 
+type Detail = 'best' | 'fast'
+
+/* Shared materials: one instance per look, reused by every mesh that needs it. */
+const matCache = new Map<string, THREE.Material>()
+function sharedMat<T extends THREE.Material>(key: string, make: () => T): T {
+  let m = matCache.get(key) as T | undefined
+  if (!m) { m = make(); matCache.set(key, m) }
+  return m
+}
+const paint = (color: string, roughness = 0.55) => sharedMat(`paint-${color}-${roughness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 }))
+const chrome = () => sharedMat('chrome', () => new THREE.MeshStandardMaterial({ color: '#b9bcc2', metalness: 0.9, roughness: 0.28 }))
+const brushed = () => sharedMat('brushed', () => new THREE.MeshStandardMaterial({ color: '#8f9094', metalness: 0.85, roughness: 0.42 }))
+function clothMat(color: string, detail: Detail) {
+  return sharedMat(`cloth-${color}-${detail}`, () => {
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 1, side: THREE.DoubleSide })
+    if (detail === 'best') {
+      const f = fabricMaps()
+      f.bumpMap.repeat.set(10, 10)
+      m.bumpMap = f.bumpMap
+      m.bumpScale = 0.0025
+    }
+    return m
+  })
+}
+function wallMat(color: string, detail: Detail) {
+  return sharedMat(`wall-${color}-${detail}`, () => {
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0 })
+    if (detail === 'best') {
+      const p = plasterMaps(detail)
+      p.bumpMap.repeat.set(1.7, 1.7)
+      p.roughnessMap.repeat.set(1.7, 1.7)
+      m.bumpMap = p.bumpMap
+      m.bumpScale = 0.0035
+      m.roughnessMap = p.roughnessMap
+      m.roughness = 1
+    }
+    return m
+  })
+}
+
+const SKIRT_H = 0.12
+const skirtProfile: [number, number][] = [[0, 0], [0.018, 0], [0.018, 0.092], [0.015, 0.1], [0.011, 0.104], [0.011, 0.111], [0.005, 0.118], [0, SKIRT_H]]
+function corniceProfile(H: number): [number, number][] {
+  const r = 0.075
+  const pts: [number, number][] = [[0, H - r], [0, H], [r, H]]
+  for (let i = 1; i <= 6; i++) {
+    const a = Math.PI / 2 + (i / 6) * (Math.PI / 2)
+    pts.push([r + r * Math.cos(a), H - r + r * Math.sin(a)])
+  }
+  return pts
+}
+
 export function Shell({ room }: { room: Room }) {
   const view = useStore((s) => s.view)
   const daytime = useStore((s) => s.daytime)
+  const quality = useStore((s) => s.quality)
   const W = cm(room.w), D = cm(room.d), H = cm(room.h)
   const walls = useRef<Record<Wall, THREE.Group | null>>({ top: null, bottom: null, left: null, right: null })
-  const ceiling = useRef<THREE.Mesh>(null)
+  const ceiling = useRef<THREE.Group>(null)
 
   useFrame(({ camera }) => {
     const c = camera.position
@@ -41,24 +96,36 @@ export function Shell({ room }: { room: Room }) {
     if (ceiling.current) ceiling.current.visible = !outside
   })
 
+  const ceilMat = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: '#f7f4ef', roughness: 1 })
+    if (quality === 'best') {
+      const c = ceilingMaps()
+      m.bumpMap = c.bumpMap
+      m.bumpScale = 0.003
+      m.roughnessMap = c.roughnessMap
+    }
+    return m
+  }, [quality])
+  useLayoutEffect(() => {
+    if (ceilMat.bumpMap) ceilMat.bumpMap.repeat.set(W, D)
+    if (ceilMat.roughnessMap) ceilMat.roughnessMap.repeat.set(W, D)
+  }, [ceilMat, W, D])
+
   return (
     <group>
       {/* ceiling (walk mode only) */}
-      <mesh ref={ceiling} position={[W / 2, H, D / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[W, D]} />
-        <meshStandardMaterial color="#f6f2ec" roughness={1} />
-      </mesh>
-      {/* pendant lamp */}
-      <group position={[W / 2, H, D / 2]}>
-        <mesh position={[0, -0.15, 0]}><cylinderGeometry args={[0.005, 0.005, 0.3]} /><meshStandardMaterial color="#888" /></mesh>
-        <mesh position={[0, -0.36, 0]}><sphereGeometry args={[0.13, 24, 16]} /><meshStandardMaterial color="#fff5e6" emissive={daytime ? '#000' : '#ffd08a'} emissiveIntensity={1.4} /></mesh>
+      <group ref={ceiling}>
+        <mesh position={[W / 2, H, D / 2]} rotation={[Math.PI / 2, 0, 0]} material={ceilMat} receiveShadow>
+          <planeGeometry args={[W, D]} />
+        </mesh>
       </group>
+      <Pendant position={[W / 2, H, D / 2]} daytime={daytime} />
 
       {(['top', 'bottom', 'left', 'right'] as Wall[]).map((wall) => {
         const t = wallTransform(room, wall)
         return (
           <group key={wall} ref={(g) => { walls.current[wall] = g }} position={t.position} rotation={t.rotation} scale={t.scale}>
-            <WallFace room={room} wall={wall} daytime={daytime} />
+            <WallFace room={room} wall={wall} daytime={daytime} detail={quality} />
           </group>
         )
       })}
@@ -66,194 +133,210 @@ export function Shell({ room }: { room: Room }) {
   )
 }
 
-/** One wall in its local frame: solid pieces around any openings, plus what hangs on it. */
-export function WallFace({ room, wall, daytime }: { room: Room; wall: Wall; daytime: boolean }) {
+/** Pendant lamp: ceiling rose, flex, a fabric drum shade and the bulb inside it. */
+function Pendant({ position, daytime }: { position: [number, number, number]; daytime: boolean }) {
+  // by day a fabric shade; at night the lit shade is an even warm glow (unlit material), the bulb blooms
+  const shadeDay = useMemo(() => new THREE.MeshStandardMaterial({ color: '#f6efe6', roughness: 1, side: THREE.DoubleSide }), [])
+  const shadeNight = useMemo(() => new THREE.MeshBasicMaterial({ color: '#f3c48f', side: THREE.DoubleSide }), [])
+  const bulb = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff9ee', roughness: 0.4, emissive: '#ffd9a6', emissiveIntensity: 0 }), [])
+  useLayoutEffect(() => {
+    bulb.emissiveIntensity = daytime ? 0 : 2.4
+  }, [daytime, bulb])
+  const shade = daytime ? shadeDay : shadeNight
+  return (
+    <group position={position}>
+      <mesh position={[0, -0.012, 0]} material={paint('#f1ece5', 0.7)}><cylinderGeometry args={[0.06, 0.07, 0.024, 20]} /></mesh>
+      <mesh position={[0, -0.18, 0]} material={paint('#6a6560', 0.8)}><cylinderGeometry args={[0.004, 0.004, 0.34, 8]} /></mesh>
+      <mesh position={[0, -0.44, 0]} material={shade}>
+        <cylinderGeometry args={[0.16, 0.19, 0.2, 28, 1, true]} />
+      </mesh>
+      <mesh position={[0, -0.34, 0]} material={paint('#f1ece5', 0.7)}><cylinderGeometry args={[0.16, 0.16, 0.006, 28]} /></mesh>
+      <mesh position={[0, -0.41, 0]} material={bulb}><sphereGeometry args={[0.035, 16, 12]} /></mesh>
+    </group>
+  )
+}
+
+/** One wall in its local frame: solid plaster pieces around any openings, plus what hangs on it. */
+export function WallFace({ room, wall, daytime, detail }: { room: Room; wall: Wall; daytime: boolean; detail: Detail }) {
   const L = cm(wallLength(room, wall)), H = cm(room.h)
   const color = room.wallColors[wall]
   const windows = room.windows.filter((o) => o.wall === wall)
   const doors = room.doors.filter((o) => o.wall === wall)
   const radiators = room.radiators.filter((o) => o.wall === wall)
   const openings = [...windows, ...doors].sort((a, b) => a.offset - b.offset)
-  const mat = <meshStandardMaterial color={color} roughness={0.95} />
-  const trim = <meshStandardMaterial color="#f8f6f2" roughness={0.6} />
+  const mat = wallMat(color, detail)
+  const trim = paint('#f8f6f2', 0.5)
 
   // Solid pieces: split the wall at each opening's edges (overlapping openings just merge).
-  const pieces: [number, number, number, number][] = [] // cx, cy, w, h
-  let cursor = 0
-  for (const o of openings) {
-    const o0 = Math.max(cursor, cm(o.offset)), o1 = Math.min(L, cm(o.offset + o.width))
-    if (o1 <= o0) continue
-    const s = cm(o.sill), t = cm(o.sill + o.height)
-    if (o0 > cursor) pieces.push([(cursor + o0) / 2, H / 2, o0 - cursor, H])
-    if (s > 0) pieces.push([(o0 + o1) / 2, s / 2, o1 - o0, s])
-    if (t < H) pieces.push([(o0 + o1) / 2, (t + H) / 2, o1 - o0, H - t])
-    cursor = o1
-  }
-  if (cursor < L) pieces.push([(cursor + L) / 2, H / 2, L - cursor, H])
+  const pieces = useMemo(() => {
+    const out: { x: number; y: number; w: number; h: number }[] = []
+    let cursor = 0
+    for (const o of openings) {
+      const o0 = Math.max(cursor, cm(o.offset)), o1 = Math.min(L, cm(o.offset + o.width))
+      if (o1 <= o0) continue
+      const s = cm(o.sill), t = cm(o.sill + o.height)
+      if (o0 > cursor) out.push({ x: (cursor + o0) / 2, y: H / 2, w: o0 - cursor, h: H })
+      if (s > 0) out.push({ x: (o0 + o1) / 2, y: s / 2, w: o1 - o0, h: s })
+      if (t < H) out.push({ x: (o0 + o1) / 2, y: (t + H) / 2, w: o1 - o0, h: H - t })
+      cursor = o1
+    }
+    if (cursor < L) out.push({ x: (cursor + L) / 2, y: H / 2, w: L - cursor, h: H })
+    // the end pieces extend by the wall thickness so the corners close up
+    return out.map((p, i) => {
+      const ext = (i === 0 ? WALL_T : 0) + (i === out.length - 1 ? WALL_T : 0)
+      const shift = (i === out.length - 1 ? WALL_T / 2 : 0) - (i === 0 ? WALL_T / 2 : 0)
+      return { ...p, x: p.x + shift, w: p.w + ext, geo: worldUvBox(p.w + ext, p.h, WALL_T) }
+    })
+  }, [L, H, JSON.stringify(openings)])
 
-  // Skirting runs along the wall but stops at each door.
-  const skirting: [number, number][] = []
-  let sc = 0
-  for (const d of [...doors].sort((a, b) => a.offset - b.offset)) {
-    const d0 = cm(d.offset), d1 = cm(d.offset + d.width)
-    if (d0 > sc) skirting.push([sc, d0])
-    sc = Math.max(sc, d1)
-  }
-  if (sc < L) skirting.push([sc, L])
+  // Skirting and cornice run along the wall; the skirting stops at each door.
+  const skirting = useMemo(() => {
+    const runs: [number, number][] = []
+    let sc = 0
+    for (const d of [...doors].sort((a, b) => a.offset - b.offset)) {
+      const d0 = cm(d.offset) - 0.05, d1 = cm(d.offset + d.width) + 0.05
+      if (d0 > sc) runs.push([sc, d0])
+      sc = Math.max(sc, d1)
+    }
+    if (sc < L) runs.push([sc, L])
+    return runs.map(([a, b]) => profileAlongX(skirtProfile, a, b))
+  }, [L, JSON.stringify(doors)])
+  const cornice = useMemo(() => profileAlongX(corniceProfile(H), 0, L), [H, L])
 
   return (
     <group>
-      {pieces.map(([x, y, w, h], i) => (
-        <mesh key={i} position={[x, y, -WALL_T / 2]} receiveShadow castShadow>
-          <boxGeometry args={[w + (i === 0 || i === pieces.length - 1 ? WALL_T : 0), h, WALL_T]} />
-          {mat}
-        </mesh>
+      {pieces.map((p, i) => (
+        <mesh key={i} geometry={p.geo} material={mat} position={[p.x, p.y, -WALL_T / 2]} receiveShadow castShadow />
       ))}
-      {/* skirting board with a small moulded top */}
-      {skirting.map(([a, b], i) => (
-        <group key={i}>
-          <mesh position={[(a + b) / 2, 0.05, 0.012]} castShadow><boxGeometry args={[b - a, 0.1, 0.024]} />{trim}</mesh>
-          <mesh position={[(a + b) / 2, 0.106, 0.008]}><boxGeometry args={[b - a, 0.012, 0.016]} /><meshStandardMaterial color="#efece6" roughness={0.6} /></mesh>
-        </group>
-      ))}
-      {/* coving where the wall meets the ceiling */}
-      <mesh position={[L / 2, H - 0.035, 0.02]}><boxGeometry args={[L, 0.07, 0.04]} /><meshStandardMaterial color="#f7f4ef" roughness={0.9} /></mesh>
-      {windows.map((w) => <Window key={w.id} win={w} daytime={daytime} />)}
+      {skirting.map((g, i) => <mesh key={i} geometry={g} material={trim} castShadow receiveShadow />)}
+      <mesh geometry={cornice} material={paint('#f9f7f3', 0.8)} />
+      {windows.length > 0 && <Outside windows={windows} wallLength={L} daytime={daytime} detail={detail} />}
+      {windows.map((w) => <Window key={w.id} win={w} daytime={daytime} detail={detail} />)}
       {radiators.map((r) => <Radiator key={r.id} radiator={r} />)}
-      {doors.map((d) => <Doorway key={d.id} room={room} door={d} />)}
+      {doors.map((d) => <Doorway key={d.id} room={room} door={d} daytime={daytime} />)}
       {(wall === 'left' || wall === 'right') && <Stars room={room} side={wall} />}
     </group>
   )
 }
 
-/** Vertical sky gradient for the view outside a window (day or night). */
-export function useSkyTexture(daytime: boolean) {
+/** A pleated curtain: a plane whose depth follows a sine wave across its width. */
+function useCurtainGeometry(width: number, height: number, detail: Detail) {
   return useMemo(() => {
-    const c = document.createElement('canvas')
-    c.width = 64
-    c.height = 256
-    const g = c.getContext('2d')!
-    const grad = g.createLinearGradient(0, 0, 0, 256)
-    if (daytime) {
-      grad.addColorStop(0, '#5f97dc')
-      grad.addColorStop(0.55, '#b8d6f4')
-      grad.addColorStop(1, '#eef4fb')
-    } else {
-      grad.addColorStop(0, '#05081a')
-      grad.addColorStop(0.6, '#141c3a')
-      grad.addColorStop(1, '#2b3050')
+    const seg = detail === 'best' ? 40 : 16
+    const g = new THREE.PlaneGeometry(width, height, seg, 2)
+    const pos = g.getAttribute('position') as THREE.BufferAttribute
+    const folds = Math.max(2, Math.round(width / 0.09))
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i)
+      const u = (x / width + 0.5) * Math.PI * 2 * folds
+      const taper = 0.75 + 0.25 * ((y / height) + 0.5) // pleats get slightly flatter toward the hem
+      pos.setZ(i, Math.sin(u) * 0.022 * taper)
     }
-    g.fillStyle = grad
-    g.fillRect(0, 0, 64, 256)
-    const t = new THREE.CanvasTexture(c)
-    t.colorSpace = THREE.SRGBColorSpace
-    return t
-  }, [daytime])
+    pos.needsUpdate = true
+    g.computeVertexNormals()
+    return g
+  }, [width, height, detail])
 }
 
-export function Window({ win, daytime }: { win: Opening; daytime: boolean }) {
+export function Window({ win, daytime, detail }: { win: Opening; daytime: boolean; detail: Detail }) {
   const blinds = useStore((s) => s.blinds)
-  const sky = useSkyTexture(daytime)
   const x0 = cm(win.offset), ww = cm(win.width), s = cm(win.sill), hh = cm(win.height)
   const cx = x0 + ww / 2, cy = s + hh / 2
   const blindH = (hh * blinds) / 100
   const panes = Math.max(1, Math.round(win.width / 55))
   const transom = s + hh * 0.66
   const zMid = -WALL_T / 2
-  const frame = <meshStandardMaterial color="#fbfbfb" roughness={0.5} />
-  const cloth = <meshStandardMaterial color="#dcd7d0" roughness={1} />
-  const clothLight = <meshStandardMaterial color="#e6e2dc" roughness={1} />
-  const metal = <meshStandardMaterial color="#9a9a98" metalness={0.8} roughness={0.35} />
-  const curtainH = hh + 0.9
-  const curtainY = s + hh / 2 + 0.2
+  const frame = paint('#fbfbfa', 0.45)
+  const lining = paint('#f5f3ef', 0.7)
+  const metal = chrome()
+  const rodMetal = brushed()
+  const cloth = clothMat('#e4dcd3', detail)
+  const blindCloth = clothMat('#f1ece4', detail)
+  const curtainTop = s + hh + 0.22
+  const curtainBottom = Math.max(0.04, s - 0.28)
+  const curtainH = curtainTop - curtainBottom
+  const curtainW = 0.42
+  const curtain = useCurtainGeometry(curtainW, curtainH, detail)
+
+  // Frame + transom + mullions as one geometry; the outer frame sits deep in the reveal.
+  const sash = useMemo(() => {
+    const boxes: BoxSpec[] = [
+      [cx, s + 0.035, zMid + 0.01, ww, 0.07, 0.08],
+      [cx, s + hh - 0.035, zMid + 0.01, ww, 0.07, 0.08],
+      [x0 + 0.035, cy, zMid + 0.01, 0.07, hh, 0.08],
+      [x0 + ww - 0.035, cy, zMid + 0.01, 0.07, hh, 0.08],
+      [cx, transom, zMid + 0.01, ww, 0.04, 0.07],
+    ]
+    for (let i = 1; i < panes; i++) boxes.push([x0 + (i * ww) / panes, cy, zMid + 0.01, 0.04, hh, 0.07])
+    // thin glazing beads around every pane
+    for (let i = 0; i < panes; i++) {
+      const px0 = x0 + (i * ww) / panes + 0.035, px1 = x0 + ((i + 1) * ww) / panes - 0.035
+      boxes.push([(px0 + px1) / 2, s + 0.075, zMid + 0.035, px1 - px0, 0.012, 0.02])
+      boxes.push([(px0 + px1) / 2, s + hh - 0.075, zMid + 0.035, px1 - px0, 0.012, 0.02])
+    }
+    return mergedBoxes(boxes)
+  }, [cx, cy, s, hh, ww, x0, transom, panes, zMid])
+
+  const reveal = useMemo(() => mergedBoxes([
+    [cx, s + 0.012, zMid, ww + 0.05, 0.024, WALL_T + 0.01],
+    [cx, s + hh - 0.012, zMid, ww + 0.05, 0.024, WALL_T + 0.01],
+    [x0 + 0.012, cy, zMid, 0.024, hh, WALL_T + 0.01],
+    [x0 + ww - 0.012, cy, zMid, 0.024, hh, WALL_T + 0.01],
+  ]), [cx, cy, s, hh, ww, x0, zMid])
+
+  const glass = useMemo(() => new THREE.MeshPhysicalMaterial({
+    color: daytime ? '#dbeeff' : '#7e93bd',
+    transparent: true,
+    opacity: daytime ? 0.16 : 0.3,
+    roughness: 0.04,
+    metalness: 0,
+    clearcoat: 1,
+    clearcoatRoughness: 0.04,
+    envMapIntensity: 1.6,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }), [daytime])
+
   return (
     <group>
       {/* reveal: the wall thickness lining the opening */}
-      {[
-        [cx, s + 0.01, ww, 0.02],
-        [cx, s + hh - 0.01, ww, 0.02],
-        [x0 + 0.01, cy, 0.02, hh],
-        [x0 + ww - 0.01, cy, 0.02, hh],
-      ].map(([x, y, fw, fh], i) => (
-        <mesh key={i} position={[x, y, zMid]}><boxGeometry args={[fw, fh, WALL_T]} />{frame}</mesh>
-      ))}
-      {/* double glazing: two panes in the middle of the wall */}
-      {[zMid - 0.012, zMid + 0.012].map((z, i) => (
-        <mesh key={i} position={[cx, cy, z]}>
-          <planeGeometry args={[ww, hh]} />
-          <meshPhysicalMaterial color={daytime ? '#d7ecfb' : '#9fb3d4'} transparent opacity={0.22} roughness={0.03} metalness={0.05} clearcoat={1} side={THREE.DoubleSide} depthWrite={false} />
-        </mesh>
-      ))}
-      {/* outside: lawn, hedge, a tree and the sky */}
-      <mesh position={[cx, -0.02, -1.7]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[ww + 4, 3.2]} />
-        <meshStandardMaterial color={daytime ? '#7fa96b' : '#182619'} roughness={1} side={THREE.DoubleSide} />
+      <mesh geometry={reveal} material={lining} receiveShadow />
+      {/* glazing */}
+      <mesh position={[cx, cy, zMid + 0.01]} material={glass} renderOrder={2}>
+        <planeGeometry args={[ww, hh]} />
       </mesh>
-      <mesh position={[cx, 0.55, -2.6]}>
-        <boxGeometry args={[ww + 4, 1.1, 0.5]} />
-        <meshStandardMaterial color={daytime ? '#5f8f4e' : '#15211a'} roughness={1} />
-      </mesh>
-      <group position={[x0 + ww + 0.5, 0, -2.2]}>
-        <mesh position={[0, 0.9, 0]}><cylinderGeometry args={[0.06, 0.09, 1.8, 8]} /><meshStandardMaterial color="#6b4b32" roughness={1} /></mesh>
-        <mesh position={[0, 2.25, 0]}><sphereGeometry args={[0.85, 14, 10]} /><meshStandardMaterial color={daytime ? '#6c9e58' : '#1a2a1c'} roughness={1} /></mesh>
-        <mesh position={[0.45, 1.8, 0.2]}><sphereGeometry args={[0.55, 12, 8]} /><meshStandardMaterial color={daytime ? '#7aae62' : '#1c2e1e'} roughness={1} /></mesh>
-      </group>
-      <mesh position={[cx, 2.2, -3.3]}>
-        <planeGeometry args={[ww + 6, 7]} />
-        <meshBasicMaterial map={sky} side={THREE.DoubleSide} />
-      </mesh>
-      {!daytime && (
-        <mesh position={[cx - ww / 3, s + hh + 0.9, -3.2]}>
-          <circleGeometry args={[0.16, 24]} />
-          <meshBasicMaterial color="#f3ecd2" />
-        </mesh>
-      )}
-      {/* frame, mullions and transom */}
-      {[
-        [cx, s + 0.03, ww + 0.1, 0.06],
-        [cx, s + hh - 0.03, ww + 0.1, 0.06],
-        [x0 + 0.03, cy, 0.06, hh],
-        [x0 + ww - 0.03, cy, 0.06, hh],
-        [cx, transom, ww, 0.035],
-        ...Array.from({ length: panes - 1 }, (_, i): number[] => [x0 + ((i + 1) * ww) / panes, cy, 0.035, hh]),
-      ].map(([x, y, fw, fh], i) => (
-        <mesh key={i} position={[x, y, zMid]} castShadow><boxGeometry args={[fw, fh, 0.08]} />{frame}</mesh>
-      ))}
+      {/* frame, transom, mullions and beads */}
+      <mesh geometry={sash} material={frame} castShadow receiveShadow />
       {/* window handle on the first pane */}
-      <group position={[x0 + ww / panes - 0.07, transom - 0.12, zMid + 0.05]}>
-        <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.022, 0.022, 0.014, 14]} />{metal}</mesh>
-        <mesh position={[0, -0.06, 0.012]}><boxGeometry args={[0.016, 0.13, 0.016]} />{metal}</mesh>
+      <group position={[x0 + ww / panes - 0.08, transom - 0.13, zMid + 0.06]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} material={metal}><cylinderGeometry args={[0.022, 0.022, 0.014, 14]} /></mesh>
+        <mesh position={[0, -0.06, 0.014]} material={metal}><boxGeometry args={[0.014, 0.13, 0.014]} /></mesh>
       </group>
-      {/* inner sill with a lip */}
-      <mesh position={[cx, s - 0.015, 0.07]} castShadow receiveShadow><boxGeometry args={[ww + 0.18, 0.03, 0.26]} />{frame}</mesh>
-      <mesh position={[cx, s - 0.04, 0.19]}><boxGeometry args={[ww + 0.18, 0.02, 0.02]} />{frame}</mesh>
+      {/* inner sill with a nosing and a small apron beneath */}
+      <mesh position={[cx, s - 0.012, 0.075]} material={frame} castShadow receiveShadow><boxGeometry args={[ww + 0.2, 0.024, 0.27]} /></mesh>
+      <mesh position={[cx, s - 0.034, 0.2]} material={frame}><boxGeometry args={[ww + 0.2, 0.02, 0.02]} /></mesh>
+      <mesh position={[cx, s - 0.06, 0.008]} material={frame}><boxGeometry args={[ww + 0.14, 0.05, 0.016]} /></mesh>
       {/* roller blind: housing, end caps, cloth, bottom bar and pull cord */}
-      <mesh position={[cx, s + hh + 0.05, 0.05]} castShadow><boxGeometry args={[ww + 0.12, 0.09, 0.09]} /><meshStandardMaterial color="#ecebe7" roughness={0.7} /></mesh>
-      {[x0 - 0.07, x0 + ww + 0.07].map((x, i) => (
-        <mesh key={i} position={[x, s + hh + 0.05, 0.05]}><boxGeometry args={[0.02, 0.1, 0.1]} /><meshStandardMaterial color="#d8d6d0" roughness={0.7} /></mesh>
-      ))}
+      <mesh position={[cx, s + hh + 0.06, 0.05]} material={paint('#ecebe7', 0.7)} castShadow><boxGeometry args={[ww + 0.12, 0.09, 0.09]} /></mesh>
       {blindH > 0.01 && (
         <>
-          <mesh position={[cx, s + hh - blindH / 2, 0.045]}>
-            <planeGeometry args={[ww + 0.08, blindH]} />
-            <meshStandardMaterial color="#f0ede6" roughness={1} side={THREE.DoubleSide} />
+          <mesh position={[cx, s + hh + 0.02 - blindH / 2, 0.048]} material={blindCloth} castShadow>
+            <planeGeometry args={[ww + 0.08, blindH + 0.04]} />
           </mesh>
-          <mesh position={[cx, s + hh - blindH, 0.045]}><boxGeometry args={[ww + 0.08, 0.02, 0.02]} /><meshStandardMaterial color="#e2ded6" roughness={0.8} /></mesh>
+          <mesh position={[cx, s + hh - blindH, 0.048]} material={paint('#dcd7cd', 0.8)}><boxGeometry args={[ww + 0.08, 0.02, 0.022]} /></mesh>
         </>
       )}
-      <mesh position={[x0 + ww + 0.04, s + hh / 2 + 0.02, 0.09]}><cylinderGeometry args={[0.003, 0.003, hh, 6]} /><meshStandardMaterial color="#cfcac2" /></mesh>
-      {/* curtain rod with finials, and a curtain each side */}
-      <mesh position={[cx, s + hh + 0.24, 0.13]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.012, 0.012, ww + 0.9, 10]} />{metal}</mesh>
-      {[cx - ww / 2 - 0.45, cx + ww / 2 + 0.45].map((x, i) => (
-        <mesh key={i} position={[x, s + hh + 0.24, 0.13]}><sphereGeometry args={[0.03, 12, 8]} />{metal}</mesh>
+      <mesh position={[x0 + ww + 0.045, s + hh / 2 + 0.02, 0.09]} material={paint('#cfcac2', 0.9)}><cylinderGeometry args={[0.003, 0.003, hh, 6]} /></mesh>
+      {/* curtain rod with finials and brackets, and a pleated curtain each side */}
+      <mesh position={[cx, curtainTop + 0.02, 0.14]} rotation={[0, 0, Math.PI / 2]} material={rodMetal}><cylinderGeometry args={[0.013, 0.013, ww + 1.1, 12]} /></mesh>
+      {[cx - ww / 2 - 0.55, cx + ww / 2 + 0.55].map((x, i) => (
+        <mesh key={i} position={[x, curtainTop + 0.02, 0.14]} material={rodMetal}><sphereGeometry args={[0.03, 14, 10]} /></mesh>
+      ))}
+      {[cx - ww / 2 - 0.35, cx + ww / 2 + 0.35].map((x, i) => (
+        <mesh key={i} position={[x, curtainTop + 0.02, 0.07]} rotation={[Math.PI / 2, 0, 0]} material={rodMetal}><cylinderGeometry args={[0.008, 0.008, 0.14, 8]} /></mesh>
       ))}
       {[x0 - 0.2, x0 + ww + 0.2].map((x, i) => (
-        <group key={i} position={[x, curtainY, 0.11]}>
-          <mesh castShadow><boxGeometry args={[0.3, curtainH, 0.1]} />{cloth}</mesh>
-          {[-0.1, 0, 0.1].map((dx, j) => (
-            <mesh key={j} position={[dx, 0, 0.05]}><boxGeometry args={[0.05, curtainH, 0.03]} />{clothLight}</mesh>
-          ))}
-        </group>
+        <mesh key={i} geometry={curtain} material={cloth} position={[x, (curtainTop + curtainBottom) / 2, 0.12]} castShadow receiveShadow />
       ))}
     </group>
   )
@@ -261,42 +344,38 @@ export function Window({ win, daytime }: { win: Opening; daytime: boolean }) {
 
 export function Radiator({ radiator: r }: { radiator: RadiatorSpec }) {
   const x0 = cm(r.offset), w = cm(r.width), h = cm(r.height), d = cm(r.depth)
-  const fins = Math.max(4, Math.floor(r.width / 8))
+  const finCount = Math.max(4, Math.floor(r.width / 8))
   const y0 = 0.14 // bottom edge above the floor
-  const white = <meshStandardMaterial color="#f7f7f5" roughness={0.45} metalness={0.05} />
-  const metal = <meshStandardMaterial color="#9a9a98" metalness={0.8} roughness={0.35} />
+  const white = paint('#f7f7f5', 0.45)
+  const metal = chrome()
   const pipeLen = y0 + 0.08
+  const fins = useMemo(() => mergedBoxes(Array.from({ length: finCount }, (_, i): BoxSpec => [-w / 2 + (i + 0.5) * (w / finCount), 0, 0, w / finCount - 0.012, h * 0.92, d])), [finCount, w, h, d])
   return (
     <group position={[x0 + w / 2, y0 + h / 2, d / 2 + 0.02]}>
       {/* back panel and front convector fins */}
-      <mesh castShadow><boxGeometry args={[w, h, d * 0.5]} />{white}</mesh>
-      {Array.from({ length: fins }, (_, i) => (
-        <mesh key={i} position={[-w / 2 + (i + 0.5) * (w / fins), 0, 0]} castShadow>
-          <boxGeometry args={[w / fins - 0.012, h * 0.92, d]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.05} />
-        </mesh>
-      ))}
+      <mesh material={white} castShadow><boxGeometry args={[w, h, d * 0.5]} /></mesh>
+      <mesh geometry={fins} material={paint('#ffffff', 0.4)} castShadow receiveShadow />
       {/* top grille */}
-      <mesh position={[0, h / 2 + 0.006, 0]}><boxGeometry args={[w, 0.012, d]} />{white}</mesh>
-      <mesh position={[0, h / 2 + 0.013, 0]}><boxGeometry args={[w - 0.04, 0.004, d * 0.55]} /><meshStandardMaterial color="#cfcfcc" roughness={0.6} /></mesh>
+      <mesh position={[0, h / 2 + 0.006, 0]} material={white}><boxGeometry args={[w, 0.012, d]} /></mesh>
+      <mesh position={[0, h / 2 + 0.013, 0]} material={paint('#cfcfcc', 0.6)}><boxGeometry args={[w - 0.04, 0.004, d * 0.55]} /></mesh>
       {/* wall brackets */}
       {[-1, 1].map((sx) => (
-        <mesh key={sx} position={[sx * (w / 2 - 0.12), -h * 0.2, -d / 2 - 0.012]}><boxGeometry args={[0.03, h * 0.5, 0.024]} />{metal}</mesh>
+        <mesh key={sx} position={[sx * (w / 2 - 0.12), -h * 0.2, -d / 2 - 0.012]} material={metal}><boxGeometry args={[0.03, h * 0.5, 0.024]} /></mesh>
       ))}
       {/* thermostat valve on the right, lockshield on the left, pipes down to the floor */}
       <group position={[w / 2 + 0.05, -h / 2 + 0.08, 0]}>
-        <mesh rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.024, 0.024, 0.07, 16]} />{white}</mesh>
-        <mesh rotation={[0, 0, Math.PI / 2]} position={[0.02, 0, 0]}><cylinderGeometry args={[0.026, 0.026, 0.008, 16]} /><meshStandardMaterial color="#d33b3b" roughness={0.5} /></mesh>
+        <mesh rotation={[0, 0, Math.PI / 2]} material={white}><cylinderGeometry args={[0.024, 0.024, 0.07, 16]} /></mesh>
+        <mesh rotation={[0, 0, Math.PI / 2]} position={[0.02, 0, 0]} material={paint('#d33b3b', 0.5)}><cylinderGeometry args={[0.026, 0.026, 0.008, 16]} /></mesh>
       </group>
-      <mesh position={[-w / 2 - 0.05, -h / 2 + 0.08, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.016, 0.016, 0.05, 12]} />{metal}</mesh>
+      <mesh position={[-w / 2 - 0.05, -h / 2 + 0.08, 0]} rotation={[0, 0, Math.PI / 2]} material={metal}><cylinderGeometry args={[0.016, 0.016, 0.05, 12]} /></mesh>
       {[w / 2 + 0.08, -w / 2 - 0.07].map((x, i) => (
-        <mesh key={i} position={[x, -h / 2 + 0.08 - pipeLen / 2, 0]}><cylinderGeometry args={[0.009, 0.009, pipeLen, 10]} />{metal}</mesh>
+        <mesh key={i} position={[x, -h / 2 + 0.08 - pipeLen / 2, 0]} material={metal}><cylinderGeometry args={[0.009, 0.009, pipeLen, 10]} /></mesh>
       ))}
     </group>
   )
 }
 
-export function Doorway({ room, door: d }: { room: Room; door: Door }) {
+export function Doorway({ room, door: d, daytime }: { room: Room; door: Door; daytime: boolean }) {
   const doorAngle = useStore((s) => s.doorAngle)
   const view = useStore((s) => s.view)
   const x0 = cm(d.offset), ww = cm(d.width), hh = cm(d.height), H = cm(room.h)
@@ -308,84 +387,90 @@ export function Doorway({ room, door: d }: { room: Room; door: Door }) {
   const phi = (doorAngle * Math.PI) / 180
   const into = d.swing === 'out' ? -1 : 1
   const leafRot = d.hinge === 'left' ? -phi * into : Math.PI + phi * into
-  const trim = <meshStandardMaterial color="#fbfaf7" roughness={0.55} />
-  const metal = <meshStandardMaterial color="#8d8d8d" metalness={0.85} roughness={0.3} />
-  const hall = '#d9d3cb'
+  const trim = paint('#fbfaf7', 0.5)
+  const leafPaint = paint('#f9f7f3', 0.5)
+  const panelPaint = paint('#f2efe9', 0.6)
+  const metal = chrome()
+  const hall = paint('#ddd6cc', 0.95)
+  const LEAF_T = 0.045
+
+  const jamb = useMemo(() => mergedBoxes([
+    [x0 + 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
+    [x0 + ww - 0.02, hh / 2, -WALL_T / 2, 0.04, hh, WALL_T],
+    [cx, hh + 0.02, -WALL_T / 2, ww + 0.08, 0.04, WALL_T],
+  ]), [x0, ww, hh, cx])
+  // architrave on both faces of the wall, with a slightly heavier head piece
+  const architrave = useMemo(() => {
+    const boxes: BoxSpec[] = []
+    for (const z of [0.012, -WALL_T - 0.012]) {
+      boxes.push([x0 - 0.045, hh / 2 + 0.02, z, 0.085, hh + 0.04, 0.024])
+      boxes.push([x0 + ww + 0.045, hh / 2 + 0.02, z, 0.085, hh + 0.04, 0.024])
+      boxes.push([cx, hh + 0.085, z, ww + 0.2, 0.09, 0.024])
+      boxes.push([cx, hh + 0.135, z * 1.15, ww + 0.22, 0.012, 0.03])
+    }
+    return mergedBoxes(boxes)
+  }, [x0, ww, hh, cx])
+  // four raised panels on each face of the leaf
+  const panels = useMemo(() => {
+    const frames: BoxSpec[] = [], raised: BoxSpec[] = []
+    const cols = [ww * 0.29, ww * 0.71], colW = ww * 0.31
+    const rows: [number, number][] = [[hh * 0.72, hh * 0.36], [hh * 0.27, hh * 0.3]]
+    for (const [z, dir] of [[LEAF_T + 0.002, 1], [-0.002, -1]] as [number, number][]) {
+      for (const cxp of cols) for (const [y, ph] of rows) {
+        frames.push([cxp, y, z, colW, ph, 0.006])
+        raised.push([cxp, y, z + dir * 0.006, colW - 0.07, ph - 0.07, 0.008])
+      }
+    }
+    return { frames: mergedBoxes(frames), raised: mergedBoxes(raised) }
+  }, [ww, hh])
+  const hinges = useMemo(() => mergedBoxes([0.25, hh / 2, hh - 0.25].map((y): BoxSpec => [0.004, y, LEAF_T / 2, 0.012, 0.1, 0.012])), [hh])
+
   return (
     <group>
-      {/* jamb lining through the wall thickness */}
-      {[
-        [x0 + 0.02, hh / 2, 0.04, hh],
-        [x0 + ww - 0.02, hh / 2, 0.04, hh],
-        [cx, hh + 0.02, ww + 0.08, 0.04],
-      ].map(([x, y, fw, fh], i) => (
-        <mesh key={i} position={[x, y, -WALL_T / 2]}><boxGeometry args={[fw, fh, WALL_T]} />{trim}</mesh>
-      ))}
-      {/* architrave on both faces of the wall */}
-      {[0.012, -WALL_T - 0.012].map((z) => (
-        <group key={z}>
-          {[
-            [x0 - 0.05, hh / 2 + 0.02, 0.08, hh + 0.04],
-            [x0 + ww + 0.05, hh / 2 + 0.02, 0.08, hh + 0.04],
-            [cx, hh + 0.08, ww + 0.18, 0.08],
-          ].map(([x, y, fw, fh], i) => (
-            <mesh key={i} position={[x, y, z]} castShadow><boxGeometry args={[fw, fh, 0.024]} />{trim}</mesh>
-          ))}
-        </group>
-      ))}
+      <mesh geometry={jamb} material={trim} receiveShadow />
+      <mesh geometry={architrave} material={trim} castShadow receiveShadow />
       {/* threshold strip */}
-      <mesh position={[cx, 0.006, -WALL_T / 2]}><boxGeometry args={[ww, 0.012, WALL_T + 0.02]} /><meshStandardMaterial color="#c9b79c" roughness={0.6} /></mesh>
+      <mesh position={[cx, 0.006, -WALL_T / 2]} material={paint('#c9b79c', 0.6)}><boxGeometry args={[ww, 0.012, WALL_T + 0.02]} /></mesh>
       {/* leaf: panelled, with lever handles on both faces and three hinges */}
       <group position={[hingeX, 0, 0]} rotation={[0, leafRot, 0]}>
-        <mesh position={[ww / 2, hh / 2 + 0.005, 0.025]} castShadow receiveShadow>
-          <boxGeometry args={[ww - 0.02, hh - 0.01, 0.045]} />
-          <meshStandardMaterial color="#fbfaf7" roughness={0.6} />
+        <mesh position={[ww / 2, hh / 2 + 0.005, LEAF_T / 2]} material={leafPaint} castShadow receiveShadow>
+          <boxGeometry args={[ww - 0.02, hh - 0.01, LEAF_T]} />
         </mesh>
-        {[0.049, 0.001].map((z) =>
-          [
-            [hh * 0.7, hh * 0.42],
-            [hh * 0.24, hh * 0.32],
-          ].map(([y, ph], i) => (
-            <mesh key={`${z}-${i}`} position={[ww / 2, y, z]}>
-              <boxGeometry args={[ww - 0.2, ph, 0.004]} />
-              <meshStandardMaterial color="#f0ede7" roughness={0.7} />
-            </mesh>
-          )),
-        )}
+        <mesh geometry={panels.frames} material={panelPaint} position={[0, 0, 0]} />
+        <mesh geometry={panels.raised} material={leafPaint} castShadow receiveShadow />
         {[
-          [0.054, 0.07],
-          [-0.004, -0.02],
+          [LEAF_T + 0.008, LEAF_T + 0.026],
+          [-0.008, -0.026],
         ].map(([zr, zl], i) => (
           <group key={i} position={[ww - 0.09, 1.02, 0]}>
-            <mesh position={[0, 0, zr]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.028, 0.028, 0.012, 16]} />{metal}</mesh>
-            <mesh position={[-0.05, 0, zl]}><boxGeometry args={[0.12, 0.018, 0.018]} />{metal}</mesh>
+            <mesh position={[0, 0, zr]} rotation={[Math.PI / 2, 0, 0]} material={metal}><cylinderGeometry args={[0.026, 0.026, 0.012, 18]} /></mesh>
+            <mesh position={[0, 0, zl]} rotation={[Math.PI / 2, 0, 0]} material={metal}><cylinderGeometry args={[0.008, 0.008, 0.03, 10]} /></mesh>
+            <mesh position={[-0.055, 0, zl]} material={metal}><boxGeometry args={[0.12, 0.016, 0.016]} /></mesh>
           </group>
         ))}
-        {[0.25, hh / 2, hh - 0.25].map((y, i) => (
-          <mesh key={i} position={[0.005, y, 0.025]}><cylinderGeometry args={[0.012, 0.012, 0.1, 10]} />{metal}</mesh>
-        ))}
+        <mesh geometry={hinges} material={metal} />
       </group>
-      {/* hallway beyond the door: floor, walls, skirting and (when walking) a ceiling */}
+      {/* hallway beyond the door: floor, walls, skirting, a soft light and (when walking) a ceiling */}
       <group position={[cx, 0, 0]}>
-        <mesh position={[0, 0, -1.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <mesh position={[0, 0, -1.2]} rotation={[-Math.PI / 2, 0, 0]} material={paint('#7a5443', 0.85)} receiveShadow>
           <planeGeometry args={[3, 2.4]} />
-          <meshStandardMaterial color="#6f4a3b" roughness={0.9} side={THREE.DoubleSide} />
         </mesh>
-        <mesh position={[0, H / 2, -2.4]}>
+        <mesh position={[0, H / 2, -2.4]} material={hall} receiveShadow>
           <planeGeometry args={[3, H]} />
-          <meshStandardMaterial color={hall} roughness={1} side={THREE.DoubleSide} />
         </mesh>
         {[-1.5, 1.5].map((x) => (
-          <mesh key={x} position={[x, H / 2, -1.2]} rotation={[0, Math.PI / 2, 0]}>
+          <mesh key={x} position={[x, H / 2, -1.2]} rotation={[0, x < 0 ? Math.PI / 2 : -Math.PI / 2, 0]} material={hall} receiveShadow>
             <planeGeometry args={[2.4, H]} />
-            <meshStandardMaterial color={hall} roughness={1} side={THREE.DoubleSide} />
           </mesh>
         ))}
-        <mesh position={[0, 0.05, -2.385]}><boxGeometry args={[3, 0.1, 0.03]} />{trim}</mesh>
+        <mesh position={[0, 0.05, -2.385]} material={trim}><boxGeometry args={[3, 0.1, 0.03]} /></mesh>
+        {/* a small picture on the hall wall */}
+        <mesh position={[0.55, 1.5, -2.38]} material={paint('#3b3733', 0.6)}><boxGeometry args={[0.42, 0.34, 0.02]} /></mesh>
+        <mesh position={[0.55, 1.5, -2.368]} material={paint('#a9c1c8', 0.9)}><planeGeometry args={[0.36, 0.28]} /></mesh>
+        <pointLight position={[0, H - 0.4, -1.2]} intensity={daytime ? 0 : 2.2} color="#ffd9a8" distance={4.5} decay={2} />
         {view === 'walk' && (
-          <mesh position={[0, H, -1.2]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0, H, -1.2]} rotation={[Math.PI / 2, 0, 0]} material={paint('#f3efe9', 1)}>
             <planeGeometry args={[3, 2.4]} />
-            <meshStandardMaterial color="#f3efe9" roughness={1} side={THREE.DoubleSide} />
           </mesh>
         )}
       </group>
@@ -393,23 +478,26 @@ export function Doorway({ room, door: d }: { room: Room; door: Door }) {
   )
 }
 
-/** Little wall stars like the ones in the photo (local wall coordinates). */
+/** Little wall stars like the ones in the photo: subtle painted decals on the side walls. */
 export function Stars({ room, side }: { room: Room; side: 'left' | 'right' }) {
-  const pts = useMemo(() => {
-    const out: [number, number, number][] = []
-    let seed = side === 'left' ? 7 : 13
-    const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
-    for (let i = 0; i < 26; i++) out.push([0.3 + rnd() * (cm(room.d) - 0.6), 0.9 + rnd() * 1.4, 0.03 + rnd() * 0.05])
-    return out
+  const ref = useRef<THREE.InstancedMesh>(null)
+  const count = 26
+  const geo = useMemo(() => new THREE.ShapeGeometry(starShape(1), 2), [])
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), [])
+  useLayoutEffect(() => {
+    const m = ref.current
+    if (!m) return
+    const rnd = seeded(side === 'left' ? 7 : 13)
+    const o = new THREE.Object3D()
+    for (let i = 0; i < count; i++) {
+      const r = 0.03 + rnd() * 0.05
+      o.position.set(0.3 + rnd() * (cm(room.d) - 0.6), 0.9 + rnd() * 1.4, 0.003)
+      o.rotation.set(0, 0, rnd() * Math.PI)
+      o.scale.set(r, r, 1)
+      o.updateMatrix()
+      m.setMatrixAt(i, o.matrix)
+    }
+    m.instanceMatrix.needsUpdate = true
   }, [room.d, side])
-  return (
-    <group>
-      {pts.map(([x, y, r], i) => (
-        <mesh key={i} position={[x, y, 0.004]}>
-          <circleGeometry args={[r, 5]} />
-          <meshStandardMaterial color="#ffffff" roughness={1} />
-        </mesh>
-      ))}
-    </group>
-  )
+  return <instancedMesh ref={ref} args={[geo, mat, count]} />
 }
