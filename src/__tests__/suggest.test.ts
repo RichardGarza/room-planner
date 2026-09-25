@@ -111,14 +111,72 @@ describe('suggestLayouts', () => {
     expect(beside.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('leaves the bed out of a room that is too small for it', () => {
+  it('leaves the bed out of a room that is too small for it, and says so instead of pretending it is on a wall', () => {
     const room = makeEmptyRoom('tiny', 160, 160)
     const items = [item('bed', 'bed', 190, 212, 95), item('chair', 'chair', 40, 40, 60)]
     const layouts = suggestLayouts(room, items)
     expect(layouts.length).toBeGreaterThanOrEqual(1)
     expect(layouts[0].placements.bed.inRoom).toBe(false)
     expect(layouts[0].placements.chair.inRoom).toBe(true)
-    expect(layouts[0].description).toMatch(/did not fit/)
+    // titled after the biggest piece that did fit, not after the bed
+    expect(layouts[0].name).toMatch(/^A · Chair (against the \w+ wall|in the \w+-\w+ corner|under the window)/)
+    expect(layouts[0].name).not.toMatch(/[Bb]ed/)
+    expect(layouts[0].description).toMatch(/^The bed does not fit in this room; the chair stands /)
+    expect(layouts[0].description).not.toMatch(/did not fit/)
+    // with nothing else to name it after
+    const [alone] = suggestLayouts(room, [item('bed', 'bed', 190, 212, 95)])
+    expect(alone.name).toBe('A · Without the bed')
+    expect(alone.description).toMatch(/^The bed does not fit in this room\./)
+  })
+
+  it('leaves furniture the user took out of the room where it is, out of the room', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    const wardrobe: Item = { ...item('wardrobe', 'wardrobe', 100, 58, 200), inRoom: false, x: 70, y: 490, rot: 90 }
+    const items = [...bedroom(), wardrobe]
+    const layouts = suggestLayouts(room, items)
+    expect(layouts.length).toBeGreaterThanOrEqual(2)
+    for (const l of layouts) {
+      expect(l.placements.wardrobe).toEqual({ x: 70, y: 490, rot: 90, inRoom: false })
+      expect(l.description).not.toMatch(/did not fit|wardrobe/)
+      for (const it of bedroom()) expect(l.placements[it.id].inRoom, `${it.id} placed in ${l.name}`).toBe(true)
+    }
+    // the parked piece takes no part: the layouts are the ones the room would get without it
+    const without = suggestLayouts(room, bedroom())
+    expect(layouts.map((l) => l.name)).toEqual(without.map((l) => l.name))
+    for (const l of layouts) {
+      const { wardrobe: _w, ...rest } = l.placements
+      expect(rest).toEqual(without.find((o) => o.id === l.id)!.placements)
+    }
+  })
+
+  it('anchors on what is in the room when the bed is parked', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    const bed: Item = { ...item('bed', 'bed', 150, 210, 95), inRoom: false, x: 95, y: 490 }
+    const items = [bed, item('dresser', 'dresser', 160, 48, 85), item('desk', 'desk', 100, 50, 75)]
+    const layouts = suggestLayouts(room, items)
+    expect(layouts.length).toBeGreaterThanOrEqual(1)
+    for (const l of layouts) {
+      expect(l.name).toMatch(/^[ABC] · Dresser /)
+      expect(l.name).not.toMatch(/head/)
+      expect(l.placements.bed).toEqual({ x: 95, y: 490, rot: 0, inRoom: false })
+      expect(l.placements.dresser.inRoom).toBe(true)
+      expect(l.description).toMatch(/^The dresser stands /)
+    }
+  })
+
+  it('titles layouts around a sofa without bed wording', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    const items = [item('sofa', 'sofa', 180, 90, 85), item('table', 'table', 100, 60, 45), item('bookcase', 'bookcase', 80, 28, 202)]
+    const layouts = suggestLayouts(room, items)
+    expect(layouts.length).toBeGreaterThanOrEqual(2)
+    for (const l of layouts) {
+      expect(l.name).toMatch(/^[ABC] · Sofa (against the (left|right|back|front) wall|in the (back|front)-(left|right) corner|under the window)/)
+      expect(l.name).not.toMatch(/head|along/)
+      expect(l.description).toMatch(/^The sofa stands (against|in the|under)/)
+    }
+    // and beds keep theirs
+    const [bedLayout] = suggestLayouts(room, bedroom())
+    expect(bedLayout.name).toMatch(/^A · Bed /)
   })
 
   it('returns nothing without furniture', () => {
@@ -132,6 +190,11 @@ describe('suggestLayouts', () => {
     const text = describeLayout(room, items, best)
     expect(text).toBe(best.description)
     expect(text).toMatch(/^The bed /)
+    // a parked piece stays out of the story too
+    const parked: Item = { ...item('wardrobe', 'wardrobe', 100, 58, 200), inRoom: false, x: 70, y: 490 }
+    const [withParked] = suggestLayouts(room, [...items, parked])
+    expect(describeLayout(room, [...items, parked], withParked)).toBe(withParked.description)
+    expect(withParked.description).not.toMatch(/wardrobe/)
   })
 })
 

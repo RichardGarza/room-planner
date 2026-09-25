@@ -35,7 +35,7 @@ describe('findFreeSpot', () => {
     expect(wr.x1 - wr.x0).toBe(58)
     // a short desk is fine under the window wall and stays unturned in the corner
     const d = findFreeSpot(room, [], 100, 50, { h: 75 })
-    expect(d).toEqual({ x: 50, y: 25, rot: 0 })
+    expect(d).toEqual({ x: 50, y: 25, rot: 0, fits: true })
   })
 
   it('keeps out of the door swing', () => {
@@ -67,17 +67,72 @@ describe('findFreeSpot', () => {
     expect(touchesWall(room, rectOf(placed(spot, 80, 45)))).toBe(true)
   })
 
-  it('falls back to the room centre when nothing is free', () => {
+  it('falls back to the room centre, with fits false, when nothing is free', () => {
+    const room = makeEmptyRoom('t', 200, 300)
+    const halves = [box('a', 200, 150, 100, 75), box('b', 200, 150, 100, 225)]
+    expect(findFreeSpot(room, halves, 60, 60)).toEqual({ x: 100, y: 150, rot: 0, fits: false })
+    // and when the item is too big for the room whichever way it is turned
+    expect(findFreeSpot(room, [], 250, 250)).toEqual({ x: 100, y: 150, rot: 0, fits: false })
+  })
+
+  it('staggers the pieces that fall back on the centre by 20 cm so none lands on another', () => {
     const room = makeEmptyRoom('t', 200, 300)
     const full = box('full', 200, 300, 100, 150)
-    expect(findFreeSpot(room, [full], 60, 60)).toEqual({ x: 100, y: 150, rot: 0 })
-    // and when the item is too big for the room whichever way it is turned
-    expect(findFreeSpot(room, [], 250, 250)).toEqual({ x: 100, y: 150, rot: 0 })
+    const first = findFreeSpot(room, [full], 60, 60)
+    expect(first).toEqual({ x: 120, y: 170, rot: 0, fits: false })
+    const second = findFreeSpot(room, [full, placed(first, 60, 60)], 60, 60)
+    expect(second).toEqual({ x: 80, y: 130, rot: 0, fits: false })
+    const third = findFreeSpot(room, [full, placed(first, 60, 60), { ...placed(second, 60, 60), id: 'new2' }], 60, 60)
+    expect(third).toEqual({ x: 140, y: 190, rot: 0, fits: false })
+  })
+
+  it('prefers a spot on top of nothing (even in the door swing) over the centre, but does not call it a fit', () => {
+    // a 200 × 300 room: everything but the door corner (x 0..100, y 220..300) is covered
+    const room = makeEmptyRoom('t', 200, 300)
+    const blocks = [box('top', 200, 220, 100, 110), box('br', 100, 80, 150, 260)]
+    const spot = findFreeSpot(room, blocks, 60, 60)
+    expect(spot.fits).toBe(false)
+    const r = rectOf(placed(spot, 60, 60))
+    expect(insideRoom(room, r)).toBe(true)
+    expect(overlapsAny(r, blocks)).toBe(false)
+    expect(r.x1).toBeLessThanOrEqual(100)
+    expect(r.y0).toBeGreaterThanOrEqual(220)
+  })
+
+  it('reports a full room as not fitting and stays quick about it', () => {
+    const items = defaultItems.map((i) => ({ ...i, ...presetLayouts[0].placements[i.id] }))
+    const t0 = performance.now()
+    const spot = findFreeSpot(defaultRoom, items, 100, 58, { h: 200, kind: 'wardrobe' })
+    expect(performance.now() - t0).toBeLessThan(100)
+    expect(spot.fits).toBe(false)
+    // the least bad place is still on top of nothing
+    expect(overlapsAny(rectOf(placed(spot, 100, 58, 200)), items)).toBe(false)
+    // while a small thing still finds a proper spot
+    expect(findFreeSpot(defaultRoom, items, 30, 30, { h: 30, kind: 'box' }).fits).toBe(true)
+  })
+
+  it('keeps 45 cm past the foot of a bed for furniture, so a dresser does not butt against it', () => {
+    const room = makeEmptyRoom('t', 300, 400)
+    // bed head to the back wall, foot at y = 210; wardrobes take the whole side walls and the door the front one,
+    // so the floor grid is all that is left
+    const bed = box('bed', 150, 210, 150, 105, 95, 'bed')
+    const items = [bed, box('wl', 58, 400, 29, 200, 200, 'wardrobe'), box('wr', 58, 400, 271, 200, 200, 'wardrobe')]
+    const spot = findFreeSpot(room, items, 160, 48, { h: 85, kind: 'dresser' })
+    expect(spot.fits).toBe(true)
+    const r = rectOf(placed(spot, 160, 48, 85))
+    expect(overlapsAny(r, items)).toBe(false)
+    const foot = rectOf(bed).y1
+    expect(r.y0).toBeGreaterThanOrEqual(foot + 45)
+    // the strip is a preference, not a wall: when only the foot is left, the piece still goes there
+    const tight = [...items, box('bottom', 184, 100, 150, 350)]
+    const squeezed = findFreeSpot(room, tight, 160, 48, { h: 85, kind: 'dresser' })
+    expect(squeezed.fits).toBe(true)
+    expect(overlapsAny(rectOf(placed(squeezed, 160, 48, 85)), tight)).toBe(false)
   })
 
   it('works outwards from the middle when asked to', () => {
     const room = makeEmptyRoom('t', 300, 400)
-    expect(findFreeSpot(room, [], 120, 120, { prefer: 'centre' })).toEqual({ x: 150, y: 200, rot: 0 })
+    expect(findFreeSpot(room, [], 120, 120, { prefer: 'centre' })).toEqual({ x: 150, y: 200, rot: 0, fits: true })
   })
 })
 

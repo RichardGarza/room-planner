@@ -10,6 +10,11 @@ export interface Spot {
   rot: Rot
 }
 
+/** What findFreeSpot found: `fits` is false when no free spot exists and the spot is only the least bad place to put the item. */
+export interface FreeSpot extends Spot {
+  fits: boolean
+}
+
 export interface PlacementOptions {
   /** Height of the new item. Anything taller than the window sill keeps off the window. */
   h?: number
@@ -22,21 +27,31 @@ export interface PlacementOptions {
 const GRID = 10
 /** gap kept between a new piece and a bed so there is still room to walk and climb in */
 const BED_GAP = 60
+/** gap kept past the foot of a bed so a dresser does not butt against it */
+const FOOT_GAP = 45
+/** how far each further item that has to fall back on the room centre is shifted, so nothing lands on top of another */
+const STAGGER = 20
 /** Same strips checks.ts uses for window coverage and radiator clearance. */
 const WINDOW_DEPTH = 12
 const RADIATOR_CLEAR = 15
 
 /** Rotation that turns an item's back (its −d side) to a wall. */
 const BACK_TO_WALL: Record<Wall, Rot> = { top: 0, right: 90, bottom: 180, left: 270 }
+/** Unit vector an item's front faces at each rotation (the foot end of a bed). */
+const FRONT: Record<Rot, [number, number]> = { 0: [0, 1], 90: [-1, 0], 180: [0, -1], 270: [1, 0] }
 
 /**
  * Find a centre for a new w×d item: inside the room, clear of every solid item, of the
  * door swing and of the space closet doors need, preferably against a wall (turned so its
- * back faces the wall), else on a 10 cm grid over the floor, else the room centre.
+ * back faces the wall), else on a 10 cm grid over the floor. Such a spot comes back with
+ * `fits: true`. When there is none, `fits` is false and the spot is the least bad place:
+ * a grid spot on top of nothing (it may be in the door swing), else the room centre,
+ * shifted 20 cm for every item already sitting there so nothing lands on top of another.
  * Furniture (not beds, nightstands or rugs) also prefers a spot that leaves a walking gap
- * beside the long sides of the beds, so a dresser does not end up flush against one.
+ * beside the long sides of the beds and 45 cm past their foot, so a dresser does not end
+ * up flush against one.
  */
-export function findFreeSpot(room: Room, items: Item[], w: number, d: number, opts: PlacementOptions = {}): Spot {
+export function findFreeSpot(room: Room, items: Item[], w: number, d: number, opts: PlacementOptions = {}): FreeSpot {
   const prefer = opts.prefer ?? 'wall'
   const solid = items.filter((i) => i.inRoom && !isRugKind(i.kind)).map(rectOf)
   const closets = (room.closets ?? []).map((c) => closetClearance(room, c).rect)
@@ -44,16 +59,21 @@ export function findFreeSpot(room: Room, items: Item[], w: number, d: number, op
   const keepsGap = prefer === 'wall' && opts.kind !== 'bed' && opts.kind !== 'nightstand' && !(opts.kind && isRugKind(opts.kind))
   const bedGaps = keepsGap ? bedGapStrips(items) : []
 
+  const insideRoom = (rect: Rect) => rect.x0 >= -0.01 && rect.y0 >= -0.01 && rect.x1 <= room.w + 0.01 && rect.y1 <= room.d + 0.01
+  const onNothing = (rect: Rect) => insideRoom(rect) && !solid.some((s) => intersects(rect, s))
   const isFree = (rect: Rect, strict: boolean, bedGap: boolean) =>
-    rect.x0 >= -0.01 && rect.y0 >= -0.01 && rect.x1 <= room.w + 0.01 && rect.y1 <= room.d + 0.01 &&
-    !solid.some((s) => intersects(rect, s)) &&
+    onNothing(rect) &&
     !doorBlocks(room, rect) &&
     !closets.some((c) => intersects(rect, c)) &&
     (!strict || !soft.some((s) => intersects(rect, s))) &&
     (!bedGap || !bedGaps.some((s) => intersects(rect, s)))
 
-  const groups = (): Iterable<Spot>[] =>
-    prefer === 'centre' ? [centreCandidates(room, w, d)] : [[...wallCandidates(room, w, d)], gridCandidates(room, w, d)]
+  const floor = () => (prefer === 'centre' ? centreCandidates(room, w, d) : gridCandidates(room, w, d))
+  const groups = (): Iterable<Spot>[] => (prefer === 'centre' ? [floor()] : [[...wallCandidates(room, w, d)], floor()])
+  const rectFor = (spot: Spot) => {
+    const { fw, fd } = footprint({ w, d, rot: spot.rot })
+    return rectAt(spot.x, spot.y, fw, fd)
+  }
 
   // First keep clear of the window and radiator too; if that finds nothing, allow them.
   // Within each group (walls, then the floor grid) a spot with a gap beside the beds beats one without.
@@ -61,17 +81,36 @@ export function findFreeSpot(room: Room, items: Item[], w: number, d: number, op
     for (const group of groups()) {
       const spots = bedGaps.length ? [...group] : group
       for (const bedGap of bedGaps.length ? [true, false] : [false]) {
-        for (const spot of spots) {
-          const { fw, fd } = footprint({ w, d, rot: spot.rot })
-          if (isFree(rectAt(spot.x, spot.y, fw, fd), strict, bedGap)) return spot
-        }
+        for (const spot of spots) if (isFree(rectFor(spot), strict, bedGap)) return { ...spot, fits: true }
       }
     }
   }
-  return { x: room.w / 2, y: room.d / 2, rot: 0 }
+  // nothing is free: a spot on top of nothing (though in the door swing, say) still beats the room centre
+  for (const spot of floor()) if (onNothing(rectFor(spot))) return { ...spot, fits: false }
+  return { ...centreFallback(room, items, w, d), fits: false }
 }
 
-/** BED_GAP-wide strips along the long sides of every bed in the room: a new piece should not stand in them. */
+/** The room centre, moved out 20 cm at a time (alternating sides) past every item already centred there. */
+function centreFallback(room: Room, items: Item[], w: number, d: number): Spot {
+  const cx = room.w / 2, cy = room.d / 2
+  const { fw, fd } = footprint({ w, d, rot: 0 })
+  const inRoom = fw <= room.w && fd <= room.d
+  const taken = (x: number, y: number) => items.some((i) => i.inRoom && Math.abs(i.x - x) < 1 && Math.abs(i.y - y) < 1)
+  const at = (k: number): Spot => {
+    const shift = Math.ceil(k / 2) * STAGGER * (k % 2 ? 1 : -1)
+    const x = inRoom ? Math.min(Math.max(cx + shift, fw / 2), room.w - fw / 2) : cx
+    const y = inRoom ? Math.min(Math.max(cy + shift, fd / 2), room.d - fd / 2) : cy
+    return { x, y, rot: 0 }
+  }
+  let spot = at(0)
+  for (let k = 1; taken(spot.x, spot.y) && k <= 2 * items.length; k++) spot = at(k)
+  return spot
+}
+
+/**
+ * Strips a new piece should not stand in: BED_GAP wide along the long sides of every bed in
+ * the room, and FOOT_GAP deep past its foot (the side its front faces).
+ */
 function bedGapStrips(items: Item[]): Rect[] {
   const out: Rect[] = []
   for (const bed of items) {
@@ -82,6 +121,11 @@ function bedGapStrips(items: Item[]): Rect[] {
     } else {
       out.push({ x0: r.x0, y0: r.y0 - BED_GAP, x1: r.x1, y1: r.y0 }, { x0: r.x0, y0: r.y1, x1: r.x1, y1: r.y1 + BED_GAP })
     }
+    const [nx, ny] = FRONT[bed.rot]
+    if (ny > 0) out.push({ x0: r.x0, y0: r.y1, x1: r.x1, y1: r.y1 + FOOT_GAP })
+    else if (ny < 0) out.push({ x0: r.x0, y0: r.y0 - FOOT_GAP, x1: r.x1, y1: r.y0 })
+    else if (nx > 0) out.push({ x0: r.x1, y0: r.y0, x1: r.x1 + FOOT_GAP, y1: r.y1 })
+    else out.push({ x0: r.x0 - FOOT_GAP, y0: r.y0, x1: r.x0, y1: r.y1 })
   }
   return out
 }

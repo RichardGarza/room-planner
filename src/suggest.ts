@@ -10,7 +10,8 @@ import type { Check, Item, ItemKind, ItemPlacement, Layout, Rect, Room, Rot, Wal
  * greedily by priority — wardrobes, dressers, the desk with its chair, bookcases, nightstands by
  * the bed head, seating and the rest, rugs last — each on the best-scoring free spot, walls first.
  * Every complete arrangement is scored with the layout checks plus a few room-sense heuristics,
- * and the best few that differ in where the bed went are returned.
+ * and the best few that differ in where the bed went are returned. Furniture the user has taken
+ * out of the room takes no part and stays out, exactly where it is.
  *
  * Pure and deterministic: the same room and furniture always give the same layouts.
  */
@@ -650,15 +651,38 @@ function bedWhere(ctx: Ctx, bed: Item, s: Scored) {
   return `runs along the ${WALL_NAME[side]} with its head to the ${WALL_NAME[wall]}${off}`
 }
 
-function titleOf(anchor: Item, s: Scored) {
-  const piece = anchor.kind === 'bed' ? 'Bed' : shortName(anchor).replace(/^./, (c) => c.toUpperCase())
-  const { wall, side } = s.head
+const capitalise = (text: string) => text.replace(/^./, (c) => c.toUpperCase())
+
+/** The biggest solid piece standing in the room apart from the anchor, if any. */
+function largestPlaced(anchor: Item, s: Scored): Item | null {
+  return s.items
+    .filter((i) => i.inRoom && !isRugKind(i.kind) && i.id !== anchor.id)
+    .reduce<Item | null>((best, i) => (!best || i.w * i.d > best.w * best.d ? i : best), null)
+}
+
+function titleOf(ctx: Ctx, anchor: Item, s: Scored) {
+  const placed = s.items.find((i) => i.id === anchor.id)?.inRoom ?? false
   let title: string
-  if (side === 'window') title = `${piece} under the window${wall === 'top' ? '' : ` on the ${WALL_NAME[wall]}`}${s.head.corner ? `, along the ${WALL_NAME[s.head.corner]}` : ''}`
-  else if (side === 'middle') title = `${piece} against the ${WALL_NAME[wall]}`
-  else if (wall === 'top') title = `${piece} along the ${WALL_NAME[side]}`
-  else if (wall === 'bottom') title = `${piece} along the ${WALL_NAME[side]}, head to the front`
-  else title = `${piece} head against the ${WALL_NAME[wall]}, ${side === 'top' ? 'back' : 'front'} corner`
+  if (!placed) {
+    // the anchor did not fit: name the layout after the biggest piece that did
+    const big = largestPlaced(anchor, s)
+    title = big ? `${capitalise(shortName(big))} ${whereIs(ctx, big)}` : `Without the ${shortName(anchor)}`
+  } else if (anchor.kind !== 'bed') {
+    const piece = capitalise(shortName(anchor))
+    const { wall, side, corner } = s.head
+    const at = wall === 'top' ? '' : ` on the ${WALL_NAME[wall]}`
+    if (side === 'window') title = `${piece} under the window${at}${corner ? `, ${cornerName([wall, corner])} corner` : ''}`
+    else if (side === 'middle') title = `${piece} against the ${WALL_NAME[wall]}`
+    else title = `${piece} in the ${cornerName([wall, side])} corner`
+  } else {
+    const piece = 'Bed'
+    const { wall, side } = s.head
+    if (side === 'window') title = `${piece} under the window${wall === 'top' ? '' : ` on the ${WALL_NAME[wall]}`}${s.head.corner ? `, along the ${WALL_NAME[s.head.corner]}` : ''}`
+    else if (side === 'middle') title = `${piece} against the ${WALL_NAME[wall]}`
+    else if (wall === 'top') title = `${piece} along the ${WALL_NAME[side]}`
+    else if (wall === 'bottom') title = `${piece} along the ${WALL_NAME[side]}, head to the front`
+    else title = `${piece} head against the ${WALL_NAME[wall]}, ${side === 'top' ? 'back' : 'front'} corner`
+  }
   if (s.deskByWindow && s.items.some((i) => i.inRoom && i.kind === 'desk') && anchor.kind !== 'desk') title += ', desk by the window'
   return title
 }
@@ -676,7 +700,11 @@ function describe(ctx: Ctx, anchor: Item, s: Scored) {
     .sort((a, b) => b.w * b.d - a.w * a.d)
     .slice(0, 3)
   const bed = s.items.find((i) => i.id === anchor.id)!
-  const anchorSentence = anchor.kind === 'bed' ? `The bed ${bedWhere(ctx, bed, s)}` : `The ${shortName(anchor)} stands ${whereIs(ctx, s.items.find((i) => i.id === anchor.id)!)}`
+  // without the anchor the layout is named after the biggest piece that did fit, even a chair: say where it went
+  if (!bed.inRoom && !big.length) { const b = largestPlaced(anchor, s); if (b) big.push(b) }
+  const anchorSentence = !bed.inRoom
+    ? `The ${shortName(anchor)} does not fit in this room`
+    : anchor.kind === 'bed' ? `The bed ${bedWhere(ctx, bed, s)}` : `The ${shortName(anchor)} stands ${whereIs(ctx, bed)}`
   const others = big.map((i) => `the ${shortName(i)} ${i.kind === 'desk' ? 'sits' : 'stands'} ${whereIs(ctx, i)}`)
   const first = others.length ? `${anchorSentence}; ${others.length > 1 ? `${others.slice(0, -1).join(', ')} and ${others[others.length - 1]}` : others[0]}.` : `${anchorSentence}.`
   const bad = s.checks.filter((c) => c.level === 'bad')
@@ -685,7 +713,9 @@ function describe(ctx: Ctx, anchor: Item, s: Scored) {
   if (bad.length) second = `Watch out: ${bad[0].text}${bad.length > 1 ? ` (and ${bad.length - 1} more)` : ''}.`
   else if (warn.length) second = `Trade-off: ${warn[0].text}${warn.length > 1 ? ` (and ${warn.length - 1} more)` : ''}.`
   else second = ctx.room.doors.length && s.pathsOk ? 'Nothing is in the way and the door opens fully.' : 'Nothing is in the way.'
-  const out = s.leftOut.length ? ` ${listNames(s.leftOut).replace(/^./, (c) => c.toUpperCase())} did not fit and ${s.leftOut.length > 1 ? 'stay' : 'stays'} out of the room.` : ''
+  // the anchor's own absence is already the first sentence
+  const leftOut = s.leftOut.filter((i) => i.id !== anchor.id)
+  const out = leftOut.length ? ` ${capitalise(listNames(leftOut))} did not fit and ${leftOut.length > 1 ? 'stay' : 'stays'} out of the room.` : ''
   return `${first} ${second}${out}`
 }
 
@@ -693,15 +723,18 @@ function describe(ctx: Ctx, anchor: Item, s: Scored) {
 
 /**
  * A few good arrangements of `items` in `room`, best first; the best one is marked recommended.
- * Every item id gets a placement; what could not be placed keeps its position with inRoom false.
+ * Every item id gets a placement: what could not be placed keeps its position with inRoom false,
+ * and what was already out of the room (parked below the plan) stays out, where it is.
  */
 export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions = {}): Layout[] {
   const max = Math.max(1, opts.max ?? 3)
   const ctx = makeCtx(room)
-  const anchor = pickAnchor(items)
+  const active = items.filter((i) => i.inRoom)
+  const parked = items.filter((i) => !i.inRoom)
+  const anchor = pickAnchor(active)
   if (!anchor) return []
-  const rugs = items.filter((i) => isRugKind(i.kind))
-  const rest = placementOrder(items.filter((i) => i !== anchor && !isRugKind(i.kind)))
+  const rugs = active.filter((i) => isRugKind(i.kind))
+  const rest = placementOrder(active.filter((i) => i !== anchor && !isRugKind(i.kind)))
 
   const results: Scored[] = []
   let order = 0
@@ -728,7 +761,7 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
         const r = spotRect(anchor, v)
         if (!insideRoom(room, r) || doorBlocks(room, r) || ctx.closets.some((c) => intersects(r, c))) continue
         const arr = buildArrangement(ctx, anchor, v, rest, rugs)
-        const all = items.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
+        const all = active.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
         results.push(scoreArrangement(ctx, anchor, all, order++))
       }
     }
@@ -739,7 +772,7 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
     const arr = newArrangement()
     for (const item of rest) { const spot = bestSpot(ctx, arr, item); if (spot) commit(arr, item, spot) }
     for (const rug of rugs) { const spot = rugSpot(ctx, arr, rug); if (spot) commit(arr, rug, spot) }
-    const all = items.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
+    const all = active.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
     results.push(scoreArrangement(ctx, anchor, all, 0))
   }
 
@@ -763,9 +796,10 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
     const letter = LETTERS[i] ?? String(i + 1)
     const placements: Record<string, ItemPlacement> = {}
     for (const it of s.items) placements[it.id] = { x: it.x, y: it.y, rot: it.rot, inRoom: it.inRoom }
+    for (const it of parked) placements[it.id] = { x: it.x, y: it.y, rot: it.rot, inRoom: false }
     const layout: Layout = {
       id: `sug-${letter.toLowerCase()}`,
-      name: `${letter} · ${titleOf(anchor, s)}`,
+      name: `${letter} · ${titleOf(ctx, anchor, s)}`,
       description: describe(ctx, anchor, s),
       placements,
     }
@@ -777,7 +811,10 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
 /** Plain-English summary of a layout applied to these items (what the suggestions use as their description). */
 export function describeLayout(room: Room, items: Item[], layout: Layout): string {
   const ctx = makeCtx(room)
-  const all = items.map((i) => (layout.placements[i.id] ? { ...i, ...layout.placements[i.id] } : i))
+  // what was out of the room and stays out took no part in the layout, so it did not "fail to fit"
+  const all = items
+    .filter((i) => i.inRoom || (layout.placements[i.id]?.inRoom ?? false))
+    .map((i) => (layout.placements[i.id] ? { ...i, ...layout.placements[i.id] } : i))
   const anchor = pickAnchor(all.filter((i) => i.inRoom)) ?? pickAnchor(all)
   if (!anchor) return layout.description
   return describe(ctx, anchor, scoreArrangement(ctx, anchor, all, 0))

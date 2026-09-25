@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Door, ItemKind, Opening, Radiator, Wall } from '../types'
 import { runChecks } from '../checks'
 import { presetLayouts } from '../data'
 import { catalog, categories } from '../catalog'
 import { footprint, rectOf } from '../geometry'
 import { findFreeSpot, isRugKind } from '../placement'
-import { useStore, type NewItemSpec } from '../store'
+import { park, useStore, type NewItemSpec } from '../store'
 import { ClosetRows } from './ClosetRows'
 import { CopyToRoom } from './CopyToRoom'
 import type { Check } from '../types'
@@ -165,15 +165,44 @@ const WALLS: { id: Wall; label: string }[] = [
   { id: 'right', label: 'Right wall' },
 ]
 
-/** Adds a new item at a free spot (against a wall when possible) and turns its back to that wall. */
-function placeNew(spec: NewItemSpec) {
+const NO_FLOOR_NOTE = 'No free floor — added to the out-of-the-room strip; drag it in.'
+const NOTE_MS = 5000
+
+/**
+ * Adds a new item at a free spot (against a wall when possible) and turns its back to that wall.
+ * When the floor has no free spot left it goes to the out-of-the-room strip below the plan
+ * instead of on top of something; `parked` says so, so the palette can tell the user.
+ */
+function placeNew(spec: NewItemSpec): { id: string; parked: boolean } {
   const s = useStore.getState()
-  const spot = findFreeSpot(s.room, s.items, spec.w, spec.d, { h: spec.h, prefer: isRugKind(spec.kind) ? 'centre' : 'wall' })
+  const spot = findFreeSpot(s.room, s.items, spec.w, spec.d, { h: spec.h, kind: spec.kind, prefer: isRugKind(spec.kind) ? 'centre' : 'wall' })
   const id = s.addItem(spec, spot)
+  if (!spot.fits) {
+    parkNew(id)
+    return { id, parked: true }
+  }
   if (spot.rot) s.rotateItem(id, spot.rot === 270 ? -90 : spot.rot)
   // addItem clamps the unturned footprint into the room first, so put it back on the exact spot
   s.moveItem(id, spot.x, spot.y)
-  return id
+  return { id, parked: false }
+}
+
+/**
+ * Moves a just-added item straight to the strip below the plan, on the next slot after what is
+ * already there (wrapping to a lower row, shifted 20 cm, once the strip is full so nothing lands
+ * exactly on another), without a second undo step.
+ */
+function parkNew(id: string) {
+  useStore.setState((st) => {
+    const slot = st.items.filter((i) => !i.inRoom).length
+    const perRow = Math.max(1, Math.floor((st.room.w - 20) / 70))
+    const row = Math.floor(slot / perRow), col = slot % perRow
+    const items = park(st.room, st.items.map((i) => (i.id === id ? { ...i, inRoom: false } : i)))
+    return {
+      items: items.map((i) => (i.id === id ? { ...i, x: Math.min(st.room.w, 20 + col * 70 + footprint(i).fw / 2 + row * 20), y: i.y + Math.min(row, 3) * 20 } : i)),
+      selectedId: id,
+    }
+  })
 }
 
 function FurniturePalette() {
@@ -182,8 +211,18 @@ function FurniturePalette() {
   const [category, setCategory] = useState('All')
   const [customOpen, setCustomOpen] = useState(false)
   const [spec, setSpec] = useState<NewItemSpec>({ name: '', kind: 'box', w: 80, d: 40, h: 75, color: '#f7f4ef' })
+  const [note, setNote] = useState<string | null>(null)
+  const noteTimer = useRef<number | undefined>(undefined)
   const unit = useUnits((s) => s.unit)
   const upd = <K extends keyof NewItemSpec>(k: K, v: NewItemSpec[K]) => setSpec((p) => ({ ...p, [k]: v }))
+  // add a piece; when it had to be parked, say so under the palette for a few seconds
+  const add = (next: NewItemSpec) => {
+    const { parked } = placeNew(next)
+    window.clearTimeout(noteTimer.current)
+    setNote(parked ? NO_FLOOR_NOTE : null)
+    if (parked) noteTimer.current = window.setTimeout(() => setNote(null), NOTE_MS)
+  }
+  useEffect(() => () => window.clearTimeout(noteTimer.current), [])
 
   const q = query.trim().toLowerCase()
   const visible = catalog.filter((p) => (category === 'All' || p.category === category) && (!q || p.name.toLowerCase().includes(q)))
@@ -215,7 +254,7 @@ function FurniturePalette() {
                       <button
                         className="palette-row"
                         title={p.note ?? `Add ${p.name}`}
-                        onClick={() => placeNew({ name: p.name, kind: p.kind, w: p.w, d: p.d, h: p.h, color: p.color, note: p.note })}
+                        onClick={() => add({ name: p.name, kind: p.kind, w: p.w, d: p.d, h: p.h, color: p.color, note: p.note })}
                       >
                         <span className="swatch" style={{ background: p.color }} />
                         <span className="palette-name">{p.name}</span>
@@ -227,6 +266,7 @@ function FurniturePalette() {
               </li>
             ))}
           </ul>
+          {note && <p className="pink small palette-note" role="status">{note}</p>}
           <p className="muted small">Click a row to add it. New things land against a free wall, clear of the door. Select one and press Delete to take it out.</p>
           <button className="palette-custom-toggle" onClick={() => setCustomOpen((o) => !o)}>
             <span className="chev">{customOpen ? '▾' : '▸'}</span> Custom size…
@@ -234,7 +274,7 @@ function FurniturePalette() {
           {customOpen && (
             <form
               className="palette-custom"
-              onSubmit={(e) => { e.preventDefault(); placeNew(spec); setSpec((p) => ({ ...p, name: '' })) }}
+              onSubmit={(e) => { e.preventDefault(); add(spec); setSpec((p) => ({ ...p, name: '' })) }}
             >
               <div className="row">
                 <input className="text" placeholder="Name, e.g. Toy chest" value={spec.name} onChange={(e) => upd('name', e.target.value)} />
