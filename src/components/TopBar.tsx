@@ -4,6 +4,7 @@ import { useLibrary } from '../library'
 import { useStore } from '../store'
 import type { Layout } from '../types'
 import { formatRoomSize, useUnits } from '../units'
+import { timeAgo } from '../library'
 import { UnitToggle } from './LengthInput'
 import './suggest.css'
 
@@ -113,6 +114,11 @@ export function TopBar() {
     : status === 'dirty' ? 'Unsaved changes'
     : status === 'error' ? (error ?? 'Could not save')
     : 'Saved'
+  const saveTitle = status === 'error' ? (error ?? undefined) : status === 'saved' && summary ? `Saved ${timeAgo(summary.updatedAt)}` : undefined
+  // locked pieces stay where they are: the suggestions arrange the rest
+  const anyLocked = items.some((i) => i.locked)
+  const refreshTitle = anyLocked ? 'Suggest layouts for the unlocked pieces' : 'The furniture or the room changed — work out fresh suggestions'
+  const suggestTitle = items.length === 0 ? 'Add some furniture first' : anyLocked ? 'Suggest layouts for the unlocked pieces' : 'Work out a few good arrangements of your furniture'
 
   return (
     <>
@@ -154,14 +160,14 @@ export function TopBar() {
                 <>
                   {suggested.map(tab)}
                   {!isExample && suggestionsStale && (
-                    <button className="tab refresh" onClick={suggest} disabled={thinking} title="The furniture or the room changed — work out fresh suggestions">
+                    <button className="tab refresh" onClick={suggest} disabled={thinking} title={refreshTitle}>
                       {thinking ? 'Thinking…' : '↻ Refresh'}
                     </button>
                   )}
                 </>
               ) : (
                 <>
-                  <button className="tab suggest-btn" onClick={suggest} disabled={thinking || items.length === 0} title={items.length === 0 ? 'Add some furniture first' : 'Work out a few good arrangements of your furniture'}>
+                  <button className="tab suggest-btn" onClick={suggest} disabled={thinking || items.length === 0} title={suggestTitle}>
                     {thinking ? 'Thinking…' : '✨ Suggest layouts'}
                   </button>
                   {noResult && <span className="tab empty">Add a bed or another big piece first</span>}
@@ -179,7 +185,7 @@ export function TopBar() {
             </>
           )}
         </div>
-        <span className={`save-state ${status}`} title={error ?? undefined}>{saveText}</span>
+        <span className={`save-state ${status}`} title={saveTitle}>{saveText}</span>
         <UnitToggle />
       </div>
       <div className="actions">
@@ -195,8 +201,10 @@ export function TopBar() {
               <li>Drag furniture on the plan or in the 3D view.</li>
               <li><kbd>R</kbd> rotates the selected item, <kbd>⇧R</kbd> the other way.</li>
               <li><kbd>⌫</kbd> takes it out of the room, <kbd>Esc</kbd> deselects.</li>
+              <li><kbd>L</kbd> locks the selected item in place (no dragging or turning; suggestions work around it).</li>
               <li>Walk mode: drag to look around, <kbd>W A S D</kbd> or arrows to move.</li>
               <li><kbd>F</kbd> toggles 2D / 3D focus; drag the divider for any split.</li>
+              <li><kbd>\</kbd> hides or shows the side panel.</li>
               <li>Changes save by themselves; <kbd>⌘S</kbd> saves right away.</li>
               <li>Share copies a link that holds your exact layout.</li>
             </ul>
