@@ -36,6 +36,8 @@ export function OutsideCamera({ room, locked }: { room: Room; locked: boolean })
 
 /** First-person field of view: wide enough to feel like standing in the room, not peering through a lens. */
 const WALK_FOV = 75
+/** radians of turn per pixel of mouse drag while walking (lower = calmer) */
+const LOOK_SENSITIVITY = 0.0022
 
 export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
   const camera = useThree((s) => s.camera)
@@ -68,7 +70,7 @@ export function WalkControls({ room, items }: { room: Room; items: Item[] }) {
       const dx = e.clientX - last.x, dy = e.clientY - last.y
       last = { x: e.clientX, y: e.clientY }
       const p = useStore.getState().walkPose
-      useStore.getState().setWalkPose({ yaw: p.yaw - dx * 0.004, pitch: THREE.MathUtils.clamp(p.pitch - dy * 0.004, -1.2, 1.2) })
+      useStore.getState().setWalkPose({ yaw: p.yaw - dx * LOOK_SENSITIVITY, pitch: THREE.MathUtils.clamp(p.pitch - dy * LOOK_SENSITIVITY, -1.2, 1.2) })
       invalidate()
     }
     const up = () => { last = null }
