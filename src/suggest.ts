@@ -43,8 +43,16 @@ import type { Check, Item, ItemKind, ItemPlacement, Layout, Rect, Room, Rot, Wal
  * drawers, doors or chair need, see accessRules in geometry.ts) faces open floor, and when it does
  * not stand in the access space of anything already placed. Pieces that do not belong together
  * (companions: nightstand and bed, chair and desk, side table and sofa) are kept 45 cm apart when
- * the room allows it. Every complete arrangement is scored with the layout checks plus a few
- * room-sense heuristics, and the best few that differ in where the anchor went are returned.
+ * the room allows it; when something has to give, it is not the bed (a bed with a single open side,
+ * a crib against the wall, keeps the full gap all round) and a bed never stands beside the door
+ * leaf's sweep. Every complete arrangement is scored with the layout checks plus a few room-sense
+ * heuristics, and the best few that differ in where the anchor went are returned.
+ *
+ * Greedy filling is short-sighted in a tight room, so the anchor spots where it left a piece out
+ * or blocked the way from the door get a second, slower pass: once more with the biggest piece
+ * first, and a wall piece that finds no spot may trade places with one already standing. Layouts
+ * with nothing to apologise for come first; when they make fewer than two, the best of the rest
+ * fill in and the description says what the trade-off is.
  *
  * Locked pieces stay exactly where they are in every layout and everything else is arranged
  * around them. Furniture the user has taken out of the room takes no part and stays out.
@@ -80,6 +88,16 @@ const LETTERS = 'ABCDEFGH'
 const WALLS: Wall[] = ['top', 'left', 'right', 'bottom']
 /** Rotation that turns an item's back (its −d side, the headboard of a bed) to a wall. */
 const BACK_TO_WALL: Record<Wall, Rot> = { top: 0, right: 90, bottom: 180, left: 270 }
+/** a wall piece (other than a bed) this close to the door leaf's sweep costs a little: the leaf bangs into it */
+const DOOR_MARGIN = 15
+/**
+ * How much a walking gap under MIN_GAP counts, by the kinds of the pair: squeezing up to a bed is
+ * worst (that is where people climb in and lean over), seating next, storage least.
+ */
+function gapWeight(a: Pick<Item, 'kind'>, b: Pick<Item, 'kind'>) {
+  const w = (k: ItemKind) => (k === 'bed' ? 2 : k === 'sofa' || k === 'chair' ? 1.5 : 1)
+  return Math.max(w(a.kind), w(b.kind))
+}
 /** Suggestions only turn things by quarter turns; an item saved at any other angle counts as the nearest one. */
 const HEAD_WALL: Record<0 | 90 | 180 | 270, Wall> = { 0: 'top', 90: 'right', 180: 'bottom', 270: 'left' }
 /** Unit vector an item's front faces at each rotation. */
@@ -103,7 +121,18 @@ interface Solid { item: Item; rect: Rect; poly?: Polygon }
  * Floor that a candidate should (or must) keep off. Access space of a placed piece carries its
  * `host` (companions may stand in it); the soft zones around a bed list the kinds they allow.
  */
-interface Zone { rect: Rect; poly?: Polygon; penalty: number; hard: boolean; host?: Item; allow?: ItemKind[] }
+interface Zone {
+  rect: Rect
+  poly?: Polygon
+  penalty: number
+  hard: boolean
+  host?: Item
+  allow?: ItemKind[]
+  /** a bed's side strip: the penalty scales with how much of the strip the candidate covers (its area, cm²) */
+  area?: number
+}
+/** A pair of solid pieces that do not belong together and stand closer than MIN_GAP. */
+interface TightPair { a: Item; b: Item; gap: number }
 interface WindowInfo { rect: Rect; sill: number; height: number; wall: Wall; offset: number; width: number }
 
 interface Ctx {
@@ -139,6 +168,10 @@ interface Scored {
   leftOut: Item[]
   /** some pair stands closer than MIN_GAP, or a nightstand or side table is away from its bed or sofa */
   crowded: boolean
+  /** the pairs that stand closer than MIN_GAP, closest first */
+  tight: TightPair[]
+  /** a nightstand or side table away from its bed or sofa, or a hamper, plant or box left in the open */
+  stranded: boolean
   order: number
 }
 
@@ -230,6 +263,35 @@ function doorBlocks(room: Room, rect: Rect): boolean {
     }
   }
   return false
+}
+
+/**
+ * How far an axis-aligned rect stays from the quarter disc an inward door leaf sweeps (0 when it
+ * reaches into it, Infinity with no inward door). Sampled along the leaf at 5° steps.
+ */
+function doorSwingGap(room: Room, rect: Rect, upTo = MIN_GAP): number {
+  let best = Infinity
+  for (const door of room.doors) {
+    if (door.swing === 'out') continue
+    const { hx, hy, r, leafDir } = doorSwing(room, door)
+    // the disc lies inside the r-square around the hinge: anything further than upTo from that square is far enough
+    if (rect.x1 < hx - r - upTo || rect.x0 > hx + r + upTo || rect.y1 < hy - r - upTo || rect.y0 > hy + r + upTo) continue
+    // the nearest point of the disc lies on its outline: the arc, sampled every 10°, and the two radii
+    const probe = (px: number, py: number) => {
+      const ex = Math.max(rect.x0 - px, 0, px - rect.x1), ey = Math.max(rect.y0 - py, 0, py - rect.y1)
+      const d = Math.hypot(ex, ey)
+      if (d < best) best = d
+    }
+    for (let deg = 0; deg <= 90; deg += 10) { const [dx, dy] = leafDir(deg); probe(hx + dx * r, hy + dy * r) }
+    for (const deg of [0, 90]) { const [dx, dy] = leafDir(deg); for (const f of [0, 0.33, 0.67]) probe(hx + dx * r * f, hy + dy * r * f) }
+    if (best === 0) return 0
+  }
+  return best
+}
+
+/** A rect grown by `by` cm on every side. */
+function grow(r: Rect, by: number): Rect {
+  return { x0: r.x0 - by, y0: r.y0 - by, x1: r.x1 + by, y1: r.y1 + by }
 }
 
 function makeCtx(room: Room, locked: Item[] = []): Ctx {
@@ -417,15 +479,23 @@ function wallSpot(room: Room, wall: Wall, t: number, item: Pick<Item, 'w' | 'd'>
  * in the arrangement (and the closet clearance), so a piece can slot exactly between two others
  * even when that spot is off the grid. Empty when the piece is wider than the wall.
  */
-function wallPositions(ctx: Ctx, arr: Arrangement, wall: Wall, along: number, step: number): number[] {
-  const L = wallLength(ctx.room, wall)
+function wallPositions(ctx: Ctx, arr: Arrangement, wall: Wall, along: number, depth: number, step: number): number[] {
+  const room = ctx.room
+  const L = wallLength(room, wall)
   const lo = along / 2, hi = L - along / 2
   if (hi < lo) return []
   const out: number[] = [...sweep(lo, hi, step)]
   const seen = new Set(out.map((t) => round(t)))
   const horizontal = wall === 'top' || wall === 'bottom'
+  // only what reaches into the band the piece will occupy along this wall can abut it there
+  const band: Rect =
+    wall === 'top' ? { x0: 0, y0: 0, x1: room.w, y1: depth }
+    : wall === 'bottom' ? { x0: 0, y0: room.d - depth, x1: room.w, y1: room.d }
+    : wall === 'left' ? { x0: 0, y0: 0, x1: depth, y1: room.d }
+    : { x0: room.w - depth, y0: 0, x1: room.w, y1: room.d }
   const edges: number[] = []
   for (const r of [...arr.solids.map((s) => s.rect), ...arr.zones.filter((z) => z.hard).map((z) => z.rect), ...ctx.closets]) {
+    if (!intersects(r, band, 0)) continue
     edges.push(horizontal ? r.x0 : r.y0, horizontal ? r.x1 : r.y1)
   }
   for (const e of edges) {
@@ -448,7 +518,7 @@ function* wallSpots(ctx: Ctx, arr: Arrangement, item: Pick<Item, 'w' | 'd'>, wal
     const along = horizontal ? fw : fd
     const depth = horizontal ? fd : fw
     if (along > wallLength(room, wall) || depth > (horizontal ? room.d : room.w)) continue
-    for (const t of wallPositions(ctx, arr, wall, along, step)) yield wallSpot(room, wall, t, item)
+    for (const t of wallPositions(ctx, arr, wall, along, depth, step)) yield wallSpot(room, wall, t, item)
   }
 }
 
@@ -505,7 +575,15 @@ function evaluate(ctx: Ctx, arr: Arrangement, item: Item, spot: Spot, ignore?: I
     if (!z.host && z.allow?.includes(item.kind)) continue
     if (!hits(rect, z)) continue
     if (z.hard) return -Infinity
-    score += z.penalty
+    // a bed's side strip: taking the whole strip costs half as much again as brushing a corner of it
+    score += z.area ? z.penalty * (0.5 + overlapArea(rect, z.rect) / z.area) : z.penalty
+  }
+  // a bed beside the door leaf's sweep has the sweep as its way in and out: never. Other wall
+  // pieces (a wardrobe the leaf bangs against) only lose a little.
+  if (WALL_KINDS.has(item.kind)) {
+    const g = doorSwingGap(room, rect)
+    if (item.kind === 'bed') { if (g < MIN_GAP) return -Infinity }
+    else if (g < DOOR_MARGIN) score -= 5
   }
   // its own drawers, doors or chair need free floor in front: never facing a wall or another piece
   const rule = accessRuleFor(item)
@@ -535,11 +613,12 @@ function evaluate(ctx: Ctx, arr: Arrangement, item: Item, spot: Spot, ignore?: I
   for (const r of ctx.radiators) if (intersects(rect, r)) score -= 3
   for (const a of ctx.approaches) if (intersects(rect, a)) score -= 3
 
-  // breathing room: anything that does not belong right next to this piece should be a walking gap away
+  // breathing room: anything that does not belong right next to this piece should be a walking gap
+  // away — and when something has to give, it should not be the bed or the seating
   for (const s of arr.solids) {
     if (s.item === ignore || areCompanions(item, s.item)) continue
     const g = gapTo(rect, s)
-    if (g < MIN_GAP) score -= 3 + 5 * (1 - g / MIN_GAP)
+    if (g < MIN_GAP) score -= gapWeight(item, s.item) * (3 + 5 * (1 - g / MIN_GAP))
   }
   // a nightstand belongs right by the bed, a chair near the desk, a side table by the sofa
   if (item.kind === 'nightstand' && arr.solids.some((s) => s.item.kind === 'bed' && rectDistance(rect, s.rect) <= 5)) score += 3
@@ -601,7 +680,13 @@ function commit(ctx: Ctx, arr: Arrangement, item: Item, spot: Spot) {
       const hard = access.rule.mode === 'all'
       const zones = hard ? access.zones : access.zones.filter((z) => fractionInRoom(ctx.room, z.rect) >= SIDE_FREE)
       const penalty = hard ? -4 : zones.length <= 1 ? -6 : -4
-      for (const z of zones) arr.zones.push({ rect: z.rect, poly: square ? undefined : z.poly, penalty, hard, host: placed })
+      for (const z of zones) {
+        const area = hard ? undefined : (z.rect.x1 - z.rect.x0) * (z.rect.y1 - z.rect.y0)
+        arr.zones.push({ rect: z.rect, poly: square ? undefined : z.poly, penalty, hard, host: placed, area })
+      }
+      // a bed with a single usable side (a crib against the wall) keeps a full walking gap all round:
+      // whatever has to be squeezed in this room, it is not squeezed against the bed
+      if (placed.kind === 'bed' && zones.length <= 1) arr.zones.push({ rect: grow(solid.rect, MIN_GAP), penalty: 0, hard: true, host: placed })
     }
   }
   return placed
@@ -667,8 +752,8 @@ function chairSpot(room: Room, desk: Item, chair: Item): Spot {
   return snapInside(room, chair, { x: desk.x + nx * dist, y: desk.y + ny * dist, rot: (snap90(desk.rot) + 180) % 360 })
 }
 
-/** Best free spot for an item: along a wall if any wall spot is allowed, else on a coarse grid. */
-function bestSpot(ctx: Ctx, arr: Arrangement, item: Item): Spot | null {
+/** Best free spot for an item: along a wall (any of `walls`) if any wall spot is allowed, else on a coarse grid. */
+function bestSpot(ctx: Ctx, arr: Arrangement, item: Item, walls: Wall[] = WALLS): Spot | null {
   let best: Spot | null = null
   let bestScore = -Infinity
   const consider = (spots: Iterable<Spot>) => {
@@ -677,11 +762,18 @@ function bestSpot(ctx: Ctx, arr: Arrangement, item: Item): Spot | null {
       if (s > bestScore) { bestScore = s; best = spot }
     }
   }
-  consider(wallSpots(ctx, arr, item))
+  consider(wallSpots(ctx, arr, item, walls))
   // storage, desks, seating and beds belong against a wall: when no wall has room they stay out
   // rather than stand in the open; anything else may take a spot on the floor grid
-  if (!best && !WALL_KINDS.has(item.kind)) consider(gridSpots(ctx.room, item))
+  if (!best && !WALL_KINDS.has(item.kind) && walls === WALLS) consider(gridSpots(ctx.room, item))
   return best
+}
+
+/** The wall a standing piece's back is against (or any wall it touches); none when it stands in the open. */
+function wallBehind(room: Room, item: Item): Wall | null {
+  const r = rectOf(item)
+  if (hasBack(item)) return touchesWall(room, r, HEAD_WALL[snap90(item.rot)]) ? HEAD_WALL[snap90(item.rot)] : null
+  return wallsTouched(room, r)[0] ?? null
 }
 
 /** Rugs go where the floor is most open, centred in that open area. */
@@ -753,7 +845,12 @@ function pickAnchor(items: Item[]): Item | null {
   return pool.reduce<Item | null>((best, i) => (!best || area(i) > area(best) ? i : best), null)
 }
 
-function buildArrangement(ctx: Ctx, anchor: Item, anchorSpot: Spot, rest: Item[], rugs: Item[]): Arrangement {
+/**
+ * Place everything but the anchor, in order, then the rugs. With `repair` a wall piece that finds
+ * no spot may trade places with one already standing (swapIn) — the slower pass, kept for the
+ * anchor spots where the plain greedy fill left something out.
+ */
+function buildArrangement(ctx: Ctx, anchor: Item, anchorSpot: Spot, rest: Item[], rugs: Item[], repair = false): Arrangement {
   const arr = newArrangement(ctx)
   const bed = commit(ctx, arr, anchor, anchorSpot)
   const bedside = new Set(bedsideNightstands(anchor, rest).map((i) => i.id))
@@ -778,8 +875,9 @@ function buildArrangement(ctx: Ctx, anchor: Item, anchorSpot: Spot, rest: Item[]
       if (idx >= 0) spot = sideSlots.splice(idx, 1)[0]
     }
     if (!spot) spot = bestSpot(ctx, arr, item)
-    if (spot) {
-      const placed = commit(ctx, arr, item, spot)
+    // a wall piece with nowhere left to go: see whether moving one of the pieces already standing makes room for both
+    const placed = spot ? commit(ctx, arr, item, spot) : repair && WALL_KINDS.has(item.kind) ? swapIn(ctx, arr, bed, item) : null
+    if (placed) {
       if (item.kind === 'desk') lastDesk = placed
       if (item.kind === 'sofa') { lastSofa = placed; sideSlots = [] }
     }
@@ -841,6 +939,111 @@ function repairPath(ctx: Ctx, arr: Arrangement, anchor: Item) {
       return
     }
   }
+  // no small piece could open the way: try moving a wall piece, its chair or side tables going with it
+  for (const piece of wallPieces(arr, anchor)) {
+    const followers = attachedTo(arr, piece)
+    let rest = without(arr, piece.id)
+    for (const f of followers) rest = without(rest, f.id)
+    if (!walkablePath(room, [...rest.placed.values()], anchor)) continue
+    // the best few spots by score (path checks cost real time), the first that opens the way wins
+    const ranked: { spot: Spot; score: number }[] = []
+    for (const spot of wallSpots(ctx, rest, piece)) {
+      const s = evaluate(ctx, rest, piece, spot)
+      if (s > -Infinity) ranked.push({ spot, score: s })
+    }
+    ranked.sort((a, b) => b.score - a.score)
+    for (const { spot } of ranked.slice(0, REPAIR_TRIES)) {
+      ctx.budget -= REPAIR_COST
+      const trial: Arrangement = { placed: new Map(rest.placed), solids: [...rest.solids], zones: [...rest.zones] }
+      const moved = commit(ctx, trial, piece, spot)
+      if (!seatFollowers(ctx, trial, moved, followers)) continue
+      if (!walkablePath(room, [...trial.placed.values()], anchor)) continue
+      arr.placed = trial.placed
+      arr.solids = trial.solids
+      arr.zones = trial.zones
+      return
+    }
+    if (ctx.budget <= 0) return
+  }
+}
+
+/**
+ * A piece that found no spot: take one of the wall pieces already standing (smallest first) off the
+ * floor, put the new piece on its best spot, then put the other back on its best spot (its chair or
+ * side tables with it). The first swap that lands both wins; null when none does. Greedy filling is
+ * short-sighted in a tight room — the first pieces take the roomy spots and leave slivers — and this
+ * one step of looking back finds most of what a person would.
+ */
+function swapIn(ctx: Ctx, arr: Arrangement, anchor: Item, item: Item): Item | null {
+  for (const other of wallPieces(arr, anchor).slice(0, SWAP_TRIES)) {
+    if (ctx.budget <= 0) return null
+    // the room this frees is along the other piece's wall, so that is where the new piece is tried
+    const wall = wallBehind(ctx.room, other)
+    if (!wall) continue
+    const followers = attachedTo(arr, other)
+    let rest = without(arr, other.id)
+    for (const f of followers) rest = without(rest, f.id)
+    const spot = bestSpot(ctx, rest, item, [wall])
+    if (!spot) continue
+    const trial: Arrangement = { placed: new Map(rest.placed), solids: [...rest.solids], zones: [...rest.zones] }
+    const placed = commit(ctx, trial, item, spot)
+    const back = bestSpot(ctx, trial, other)
+    if (!back) continue
+    const moved = commit(ctx, trial, other, back)
+    if (!seatFollowers(ctx, trial, moved, followers)) continue
+    arr.placed = trial.placed
+    arr.solids = trial.solids
+    arr.zones = trial.zones
+    return placed
+  }
+  return null
+}
+
+/** how many standing pieces swapIn tries to trade places with (the smallest ones) */
+const SWAP_TRIES = 4
+/** how many spots of a wall piece repairPath tries with a path check, and what each costs of the budget */
+const REPAIR_TRIES = 6
+const REPAIR_COST = 40
+
+/** Wall pieces that may be moved to open the way: not the anchor, not locked; smallest first. */
+function wallPieces(arr: Arrangement, anchor: Item): Item[] {
+  return arr.solids
+    .map((s) => s.item)
+    .filter((i) => WALL_KINDS.has(i.kind) && !i.locked && i.id !== anchor.id)
+    .sort((a, b) => a.w * a.d - b.w * b.d || a.id.localeCompare(b.id))
+}
+
+/** The chair tucked at a desk, the side tables at a sofa's ends, the nightstands by a bed: they move with it. */
+function attachedTo(arr: Arrangement, host: Item): Item[] {
+  const hr = rectOf(host)
+  return arr.solids
+    .map((s) => s.item)
+    .filter((i) => {
+      if (i.locked || i.id === host.id) return false
+      if (host.kind === 'desk') return i.kind === 'chair' && rectDistance(rectOf(i), hr) <= 30
+      if (host.kind === 'sofa') return isSideTable(i) && rectDistance(rectOf(i), hr) <= 5
+      if (host.kind === 'bed') return i.kind === 'nightstand' && rectDistance(rectOf(i), hr) <= 5
+      return false
+    })
+}
+
+/** Put a moved piece's followers back at its side (or on the best free spot); false when one has nowhere to go. */
+function seatFollowers(ctx: Ctx, arr: Arrangement, host: Item, followers: Item[]): boolean {
+  let slots: Spot[] = host.kind === 'sofa' ? sofaSideSpots(ctx.room, host, followers[0] ?? host) : host.kind === 'bed' ? nightstandSpots(ctx.room, host, followers[0] ?? host) : []
+  for (const f of followers) {
+    let spot: Spot | null = null
+    if (host.kind === 'desk') {
+      const s = chairSpot(ctx.room, host, f)
+      if (evaluate(ctx, arr, f, s, host) > -Infinity) spot = s
+    } else {
+      const idx = slots.findIndex((s) => evaluate(ctx, arr, f, s) > -Infinity)
+      if (idx >= 0) spot = slots.splice(idx, 1)[0]
+    }
+    if (!spot) spot = bestSpot(ctx, arr, f)
+    if (!spot) return false
+    commit(ctx, arr, f, spot)
+  }
+  return true
 }
 
 /* ---------- scoring a whole arrangement ---------- */
@@ -852,6 +1055,11 @@ function headSide(ctx: Ctx, bed: Item): Scored['head'] {
   if (ctx.windows.some((w) => w.wall === wall && spanOverlap(spanOf(r, wall), w) >= 20)) return corner ? { wall, side: 'window', corner } : { wall, side: 'window' }
   if (corner) return { wall, side: corner, corner }
   return { wall, side: 'middle' }
+}
+
+/** The green checks that say something about the room: a piece fitting under the window, a clear entry. */
+function okWorthAPoint(c: Check) {
+  return c.level === 'ok' && (/ fits under /.test(c.text) || /[Cc]lear entry/.test(c.text))
 }
 
 /** The checks warn about anything closer than 60 cm to the bed — a nightstand is meant to be. */
@@ -883,23 +1091,32 @@ export function usableBedSides(room: Room, bed: Item, items: Item[]): number {
   return usable
 }
 
-/** Pairs of solid pieces that do not belong together and stand closer than MIN_GAP (touching counts double). */
-function crowding(solid: Item[]): { close: number; touching: number } {
+/**
+ * Pairs of solid pieces that do not belong together and stand closer than MIN_GAP: the weighted
+ * counts (a pair with a bed counts double, with seating one and a half times) and the pairs
+ * themselves, closest first.
+ */
+function crowding(solid: Item[]): { close: number; touching: number; pairs: TightPair[] } {
   let close = 0, touching = 0
+  const pairs: TightPair[] = []
   for (let a = 0; a < solid.length; a++) {
     for (let b = a + 1; b < solid.length; b++) {
       if (areCompanions(solid[a], solid[b])) continue
       const g = itemsGap(solid[a], solid[b])
-      if (g <= 0.5) touching++
-      else if (g < MIN_GAP) close++
+      if (g >= MIN_GAP) continue
+      const w = gapWeight(solid[a], solid[b])
+      if (g <= 0.5) touching += w
+      else close += w
+      pairs.push({ a: solid[a], b: solid[b], gap: g })
     }
   }
-  return { close, touching }
+  pairs.sort((p, q) => p.gap - q.gap || p.a.id.localeCompare(q.a.id) || p.b.id.localeCompare(q.b.id))
+  return { close, touching, pairs }
 }
 
 /** Nothing left out, everyone reachable, no crowding, no red or access check: another placement order cannot beat this. */
 function flawless(s: Scored) {
-  return s.pathsOk && !s.leftOut.length && !s.crowded && !s.checks.some((c) => c.level === 'bad' || isAccessCheck(c))
+  return isClean(s) && !s.crowded
 }
 
 function scoreArrangement(ctx: Ctx, anchor: Item, all: Item[], order: number, parts?: string[]): Scored {
@@ -910,7 +1127,9 @@ function scoreArrangement(ctx: Ctx, anchor: Item, all: Item[], order: number, pa
   const leftOut = all.filter((i) => !i.inRoom)
   const checks = runChecks(room, all).filter((c) => !nightstandPassage(all, c))
   let score = 0
-  for (const c of checks) score += note(`check "${c.text}"`, c.level === 'bad' ? -12 : c.level === 'warn' ? -3 : 1)
+  // red and amber checks cost; the only green lines worth a point are a clear window and a clear
+  // way in (a "passage ok" line only exists for pieces near the bed, so it would reward crowding it)
+  for (const c of checks) score += note(`check "${c.text}"`, c.level === 'bad' ? -12 : c.level === 'warn' ? -3 : okWorthAPoint(c) ? 1 : 0)
 
   const bed = placed.find((i) => i.id === anchor.id) ?? null
   const head = bed ? headSide(ctx, bed) : { wall: 'top' as Wall, side: 'middle' as const }
@@ -929,7 +1148,7 @@ function scoreArrangement(ctx: Ctx, anchor: Item, all: Item[], order: number, pa
     const sides = usableBedSides(room, mainBed, solid)
     // a double bed wants both sides; a single is fine along a wall
     const double = Math.min(mainBed.w, mainBed.d) >= 120
-    score += note(`${sides} bed sides usable`, double ? (sides === 2 ? 6 : sides === 1 ? 0 : -4) : sides === 2 ? 2 : sides === 1 ? 1 : -3)
+    score += note(`${sides} bed sides usable`, double ? (sides === 2 ? 6 : sides === 1 ? -3 : -6) : sides === 2 ? 2 : sides === 1 ? 1 : -3)
   }
 
   const occ = new Occupancy(room, solid.map(rectOf))
@@ -950,7 +1169,8 @@ function scoreArrangement(ctx: Ctx, anchor: Item, all: Item[], order: number, pa
   // storage, desks, seating and beds belong with their back against a wall; one left standing in the open spoils the room
   score += note('wall pieces in the open', -10 * solid.filter((i) => WALL_KINDS.has(i.kind) && !onWall(room, i, rectOf(i))).length)
   // a hamper, plant or box adrift in the middle of the floor is untidy too (chairs and side tables sit with their host)
-  score += note('loose pieces adrift', -6 * solid.filter((i) => !WALL_KINDS.has(i.kind) && i.kind !== 'chair' && !isSideTable(i) && !onWall(room, i, rectOf(i))).length)
+  const adrift = solid.filter((i) => !WALL_KINDS.has(i.kind) && i.kind !== 'chair' && !isSideTable(i) && !onWall(room, i, rectOf(i))).length
+  score += note('loose pieces adrift', -6 * adrift)
   // a side table that did not make it to the end of a sofa
   if (solid.some((i) => i.kind === 'sofa')) {
     const bedside = new Set(bedsideNightstands(anchor, solid).map((i) => i.id))
@@ -964,11 +1184,11 @@ function scoreArrangement(ctx: Ctx, anchor: Item, all: Item[], order: number, pa
   // companions that did not make it to their host count as crowding too: another order may do better
   const stranded = (bed ? bedsideNightstands(anchor, solid).some((ns) => rectDistance(rectOf(ns), rectOf(bed)) > 5) : false) ||
     solid.some((t) => isSideTable(t) && !bedsideNightstands(anchor, solid).includes(t) && solid.some((o) => o.kind === 'sofa') && !solid.some((o) => o.kind === 'sofa' && rectDistance(rectOf(t), rectOf(o)) <= 5))
-  const crowded = crowd.close + crowd.touching > 0 || stranded
+  const crowded = crowd.pairs.length > 0 || stranded
   // a piece that could not be placed is worse than any single check: the room is supposed to hold it
   score += note('left out', -20 * leftOut.length)
 
-  return { items: all, score, checks, head, deskByWindow, pathsOk, leftOut, crowded, order }
+  return { items: all, score, checks, head, deskByWindow, pathsOk, leftOut, crowded, tight: crowd.pairs, stranded: stranded || adrift > 0, order }
 }
 
 /* ---------- words ---------- */
@@ -1061,6 +1281,16 @@ function accessNote(s: Scored) {
   return phrases.length ? ` ${capitalise(joinPhrases(phrases.slice(0, 2)))}.` : ''
 }
 
+/** "the changing table stands right beside the tall cabinet and the side table 22 cm from the hamper (and 1 more)" */
+function tightNote(pairs: TightPair[]) {
+  const phrase = (p: TightPair, i: number) => {
+    const verb = i === 0 ? 'stands ' : ''
+    return p.gap <= 0.5 ? `the ${shortName(p.a)} ${verb}right beside the ${shortName(p.b)}` : `the ${shortName(p.a)} ${verb}${Math.round(p.gap)} cm from the ${shortName(p.b)}`
+  }
+  const shown = pairs.slice(0, 2).map(phrase)
+  return `${shown.join(' and ')}${pairs.length > 2 ? ` (and ${pairs.length - 2} more)` : ''}`
+}
+
 function describe(ctx: Ctx, anchor: Item, s: Scored) {
   const placed = s.items.filter((i) => i.inRoom && !isRugKind(i.kind) && i.id !== anchor.id)
   const big = placed
@@ -1080,13 +1310,38 @@ function describe(ctx: Ctx, anchor: Item, s: Scored) {
   let second: string
   if (bad.length) second = `Watch out: ${bad[0].text}${bad.length > 1 ? ` (and ${bad.length - 1} more)` : ''}.`
   else if (warn.length) second = `Trade-off: ${warn[0].text}${warn.length > 1 ? ` (and ${warn.length - 1} more)` : ''}.`
+  else if (ctx.room.doors.length && !s.pathsOk) second = `Trade-off: no clear ${PATH} cm walkway from the door to the ${shortName(anchor)}.`
+  else if (s.tight.length) second = `Tight fit: ${tightNote(s.tight)}.`
   else second = ctx.room.doors.length && s.pathsOk ? 'Nothing is in the way and the door opens fully.' : 'Nothing is in the way.'
+  // a room too small for a walking gap everywhere: say where it was given up
+  if ((bad.length || warn.length || (ctx.room.doors.length && !s.pathsOk)) && s.tight.length) second += ` Tight fit: ${tightNote(s.tight)}.`
+  const adrift = strandedNote(ctx, anchor, s)
   const locked = s.items.filter((i) => i.inRoom && ctx.locked.some((l) => l.id === i.id))
   const kept = locked.length ? ` ${capitalise(listNames(locked))} ${locked.length > 1 ? 'stay' : 'stays'} where you locked ${locked.length > 1 ? 'them' : 'it'}.` : ''
   // the anchor's own absence is already the first sentence
   const leftOut = s.leftOut.filter((i) => i.id !== anchor.id)
   const out = leftOut.length ? ` ${capitalise(listNames(leftOut))} did not fit and ${leftOut.length > 1 ? 'stay' : 'stays'} out of the room.` : ''
-  return `${first} ${second}${accessNote(s)}${kept}${out}`
+  return `${first} ${second}${accessNote(s)}${adrift}${kept}${out}`
+}
+
+/** " The side table could not go beside the recliner, and the hamper stands in the open." — the pieces that did not land where they belong. */
+function strandedNote(ctx: Ctx, anchor: Item, s: Scored) {
+  const solid = s.items.filter((i) => i.inRoom && !isRugKind(i.kind))
+  const phrases: string[] = []
+  const bed = solid.find((i) => i.id === anchor.id)
+  const bedside = bed ? bedsideNightstands(anchor, solid) : []
+  for (const ns of bedside) if (bed && rectDistance(rectOf(ns), rectOf(bed)) > 5) phrases.push(`the ${shortName(ns)} could not go beside the bed`)
+  const sofas = solid.filter((i) => i.kind === 'sofa')
+  if (sofas.length) {
+    for (const t of solid.filter((i) => isSideTable(i) && !bedside.includes(i))) {
+      if (!sofas.some((o) => rectDistance(rectOf(t), rectOf(o)) <= 5)) phrases.push(`the ${shortName(t)} could not go beside the ${shortName(sofas[0])}`)
+    }
+  }
+  for (const i of solid) {
+    if (WALL_KINDS.has(i.kind) || i.kind === 'chair' || isSideTable(i)) continue
+    if (!wallsTouched(ctx.room, rectOf(i)).length) phrases.push(`the ${shortName(i)} stands in the open`)
+  }
+  return phrases.length ? ` ${capitalise(joinPhrases(phrases.slice(0, 2)))}.` : ''
 }
 
 /* ---------- public API ---------- */
@@ -1133,13 +1388,28 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
   const others = free.filter((i) => i !== anchor && !isRugKind(i.kind))
   const rest = placementOrder(anchor, others)
   // each anchor position is also tried placing the biggest pieces first, which helps in tight rooms
-  const orders = [rest, placementOrder(anchor, others, bySize), placementOrder(anchor, others, byHeight)].filter((o, i, all) => all.findIndex((p) => p.map((x) => x.id).join() === o.map((x) => x.id).join()) === i)
+  const sameOrder = (o: Item[], i: number, all: Item[][]) => all.findIndex((p) => p.map((x) => x.id).join() === o.map((x) => x.id).join()) === i
+  const orders = [rest, placementOrder(anchor, others, bySize), placementOrder(anchor, others, byHeight)].filter(sameOrder)
+  // and, when those leave something out or the way to the bed blocked, once more with the single biggest
+  // piece (the sofa, say) before everything and the swap-in repair switched on
+  const biggest = others.filter((i) => i.kind !== 'chair' && !isSideTable(i)).sort((a, b) => b.w * b.d - a.w * a.d || a.id.localeCompare(b.id))[0]
+  const bigFirst = biggest ? placementOrder(anchor, others, (a, b) => (a === biggest ? -1 : b === biggest ? 1 : byPriority(a, b))) : rest
+  const repairOrders = [bigFirst, ...orders].filter(sameOrder)
   const bedside = new Set(bedsideNightstands(anchor, rest).map((i) => i.id))
   ctx.wantsSideTables = rest.some((i) => isSideTable(i) && !bedside.has(i.id))
 
   const results: Scored[] = []
+  const toRepair: AnchorTrial[] = []
   let order = 0
   const base = newArrangement(ctx)
+  /** two results put the anchor at much the same place (same wall and window / corner / middle, or close together) */
+  const anchorOf = (r: Scored) => r.items.find((i) => i.id === anchor.id)!
+  const similar = (a: Scored, b: Scored) => {
+    if (`${a.head.wall}/${a.head.side}/${a.head.corner ?? ''}` === `${b.head.wall}/${b.head.side}/${b.head.corner ?? ''}`) return true
+    const A = anchorOf(a), B = anchorOf(b)
+    if (A.rot !== B.rot || !A.inRoom || !B.inRoom) return false
+    return Math.hypot(A.x - B.x, A.y - B.y) < Math.max(PATH, 0.25 * wallLength(room, a.head.wall))
+  }
   for (const wall of WALLS) {
     const { fw, fd } = footprint({ w: anchor.w, d: anchor.d, rot: BACK_TO_WALL[wall] })
     const horizontal = wall === 'top' || wall === 'bottom'
@@ -1149,7 +1419,7 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
     if (along > L || depth > (horizontal ? room.d : room.w)) continue
     const span = L - along
     const step = Math.max(GRID, Math.ceil(span / ANCHOR_STEPS / GRID) * GRID)
-    for (const t of wallPositions(ctx, base, wall, along, step)) {
+    for (const t of wallPositions(ctx, base, wall, along, depth, step)) {
       if (ctx.budget <= 0) break
       const spot = wallSpot(room, wall, t, anchor)
       const variants = [spot]
@@ -1162,24 +1432,30 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
       for (const v of variants) {
         // the anchor itself must be allowed there: clear of the door, the closets, the locked pieces and their access space
         if (evaluate(ctx, base, anchor, v) === -Infinity) continue
-        let best: Scored | null = null
-        const seen = new Set<string>()
-        for (const o of orders) {
-          const arr = buildArrangement(ctx, anchor, v, o, rugs)
-          const all = active.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
-          // two orders often end in the same arrangement: score it once
-          const key = all.map((i) => `${i.id}:${i.inRoom ? `${i.x},${i.y},${i.rot}` : 'out'}`).join(';')
-          if (seen.has(key)) continue
-          seen.add(key)
-          const scored = scoreArrangement(ctx, anchor, all, order)
-          if (!best || scored.score > best.score) best = scored
-          // the other orders are for tight rooms: an arrangement with nothing wrong is not going to improve
-          if (flawless(scored)) break
-        }
-        if (best) results.push(best)
-        order++
+        const trial = new AnchorTrial(ctx, anchor, v, rugs, active, order++)
+        trial.run(orders, false)
+        if (trial.best) results.push(trial.best)
+        // a piece left out or the way to the bed blocked: worth the slower repair pass, for the best few such spots
+        if (trial.best && (trial.best.leftOut.length || !trial.best.pathsOk)) toRepair.push(trial)
       }
     }
+  }
+  // the repair pass goes to the most promising failed spots, one per distinct anchor position first
+  // so the slots are not all spent on near-identical spots along one wall
+  toRepair.sort((a, b) => b.rank - a.rank || a.order - b.order)
+  const repairs: AnchorTrial[] = []
+  for (const pass of [true, false]) {
+    for (const t of toRepair) {
+      if (repairs.length >= REPAIR_SPOTS) break
+      if (repairs.includes(t) || (pass && repairs.some((o) => similar(o.best!, t.best!)))) continue
+      repairs.push(t)
+    }
+  }
+  for (const trial of repairs) {
+    if (ctx.budget <= 0) break
+    const before = trial.best!
+    trial.run(repairOrders, true)
+    if (trial.best !== before) results[results.indexOf(before)] = trial.best!
   }
 
   if (!results.length) {
@@ -1192,26 +1468,83 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
   }
 
   results.sort((a, b) => b.score - a.score || a.order - b.order)
-  // only layouts with nothing to apologise for (no red check, every drawer and door can open, every
-  // piece in, a way from the door to the bed) are offered — unless there is none, then the best of the rest
-  const clean = (r: Scored) => r.pathsOk && !r.leftOut.length && !r.checks.some((c) => c.level === 'bad' || isAccessCheck(c))
-  const pool = results.some(clean) ? results.filter(clean) : results
   // keep the best few that put the anchor somewhere meaningfully different
   const chosen: Scored[] = []
-  const anchorOf = (r: Scored) => r.items.find((i) => i.id === anchor.id)!
-  const similar = (a: Scored, b: Scored) => {
-    if (`${a.head.wall}/${a.head.side}/${a.head.corner ?? ''}` === `${b.head.wall}/${b.head.side}/${b.head.corner ?? ''}`) return true
-    const A = anchorOf(a), B = anchorOf(b)
-    if (A.rot !== B.rot || !A.inRoom || !B.inRoom) return false
-    return Math.hypot(A.x - B.x, A.y - B.y) < Math.max(PATH, 0.25 * wallLength(room, a.head.wall))
+  const pick = (pool: Scored[]) => {
+    for (const r of pool) {
+      if (chosen.some((c) => similar(c, r))) continue
+      chosen.push(r)
+      if (chosen.length >= max) break
+    }
   }
-  for (const r of pool) {
-    if (chosen.some((c) => similar(c, r))) continue
-    chosen.push(r)
-    if (chosen.length >= max) break
-  }
+  // layouts with nothing to apologise for (no red check, every drawer and door can open, every piece
+  // in, a way from the door to the bed) come first; when they make fewer than two tabs, the best of
+  // the rest fill in — the description says what the trade-off is
+  pick(results.filter(isClean))
+  if (chosen.length < Math.min(2, max)) pick(results.filter((r) => !isClean(r)))
 
   return chosen.map((s, i) => toLayout(ctx, anchor, s, parked, i))
+}
+
+/** how many of the anchor spots the plain fill could not complete get the slower repair pass (the best-scoring ones) */
+const REPAIR_SPOTS = 5
+
+/** One anchor spot: the best arrangement found for it so far over the placement orders tried. */
+class AnchorTrial {
+  best: Scored | null = null
+  readonly order: number
+  private readonly ctx: Ctx
+  private readonly anchor: Item
+  private readonly spot: Spot
+  private readonly rugs: Item[]
+  private readonly active: Item[]
+  private readonly seen = new Set<string>()
+  private readonly tried = new Set<Item[]>()
+  /** the orders that left a piece out: the only ones a repair pass can improve on */
+  private readonly failed = new Set<Item[]>()
+
+  constructor(ctx: Ctx, anchor: Item, spot: Spot, rugs: Item[], active: Item[], order: number) {
+    this.ctx = ctx
+    this.anchor = anchor
+    this.spot = spot
+    this.rugs = rugs
+    this.active = active
+    this.order = order
+  }
+
+  /** How promising a repair pass is: the score with the left-out penalty forgiven (that is what the pass is for). */
+  get rank() {
+    return this.best ? this.best.score + 20 * this.best.leftOut.length : -Infinity
+  }
+
+  /** Build and score the arrangement for each order; stops early at one that no other order could beat. */
+  run(orders: Item[][], repair: boolean) {
+    for (const o of orders) {
+      // without a swap-in, an order that placed everything builds the same arrangement again
+      if (repair && this.seen.size && !this.failed.has(o) && this.tried.has(o)) continue
+      this.tried.add(o)
+      const arr = buildArrangement(this.ctx, this.anchor, this.spot, o, this.rugs, repair)
+      const all = this.active.map((i) => arr.placed.get(i.id) ?? { ...i, inRoom: false })
+      if (all.some((i) => !i.inRoom)) this.failed.add(o)
+      // two orders often end in the same arrangement: score it once
+      const key = all.map((i) => `${i.id}:${i.inRoom ? `${i.x},${i.y},${i.rot}` : 'out'}`).join(';')
+      if (this.seen.has(key)) continue
+      this.seen.add(key)
+      const scored = scoreArrangement(this.ctx, this.anchor, all, this.order)
+      if (!this.best || scored.score > this.best.score) this.best = scored
+      // the other orders are for tight rooms: an arrangement with nothing wrong is not going to improve
+      // (and in the repair pass, one with nothing to apologise for is all that is asked)
+      if (flawless(scored) || (repair && isClean(scored))) return
+    }
+  }
+}
+
+/**
+ * Nothing to apologise for: every piece in, a way from the door to the bed, no red check, every
+ * drawer and door can open, every side table with its sofa and nothing adrift in the open.
+ */
+function isClean(r: Scored) {
+  return r.pathsOk && !r.leftOut.length && !r.stranded && !r.checks.some((c) => c.level === 'bad' || isAccessCheck(c))
 }
 
 /** Plain-English summary of a layout applied to these items (what the suggestions use as their description). */

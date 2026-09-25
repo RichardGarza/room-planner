@@ -113,6 +113,17 @@ describe('migrateDoc validation', () => {
     expect(migrateDoc({ id: 'x', name: 'Doc', room: legacy, items: [{ id: 'a', y: Infinity }] })!.items[0].y).toBe(205)
   })
 
+  it('keeps the locked flag through a round trip (a saved, shared or imported room keeps its locks)', () => {
+    const doc = migrateDoc({ id: 'x', name: 'Doc', room: legacy, items: [{ ...good, locked: true }, { ...good, id: 'b' }, { ...good, id: 'c', locked: 'yes' }] })!
+    expect(doc.items[0]).toEqual({ ...good, locked: true })
+    expect('locked' in doc.items[1]).toBe(false)
+    // anything but a real true is not a lock
+    expect('locked' in doc.items[2]).toBe(false)
+    // and again through JSON, the way storage and share links carry it
+    const again = migrateDoc(JSON.parse(JSON.stringify(doc)))!
+    expect(again.items.map((i) => i.locked ?? false)).toEqual([true, false, false])
+  })
+
   it('keeps any finite rotation (free rotation) and normalises it to 0..360', () => {
     const doc = migrateDoc({ id: 'x', name: 'Doc', room: legacy, items: [{ ...good, rot: 37.5 }, { ...good, id: 'b', rot: -90 }, { ...good, id: 'c', rot: 450 }] })!
     expect(doc.items.map((i) => i.rot)).toEqual([37.5, 270, 90])

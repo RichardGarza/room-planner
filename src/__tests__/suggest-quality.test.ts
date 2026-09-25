@@ -3,8 +3,9 @@ import { findPreset } from '../catalog'
 import { isAccessCheck, runChecks } from '../checks'
 import { makeEmptyRoom } from '../data'
 import { accessAllows, accessZones, areCompanions, closetClearance, doorSwing, faceZone, isRugKind, itemsGap, itemsIntersect, polygonIntersectsRect, polygonOf, polygonsIntersect, rectOf, wallStripRect } from '../geometry'
+import { migrateDoc } from '../migrate'
 import { forestsRoom } from '../seeds'
-import { MIN_GAP, suggestLayouts } from '../suggest'
+import { explainScore, MIN_GAP, suggestLayouts } from '../suggest'
 import type { Item, Layout, Rect, Room } from '../types'
 
 /*
@@ -71,6 +72,46 @@ function inDoorSwing(room: Room, item: Item) {
     }
   }
   return false
+}
+
+/** How far an item's box stays from the quarter disc an in-swinging door sweeps (0 when it reaches into it). */
+function doorSwingDistance(room: Room, item: Item) {
+  let best = Infinity
+  const b = rectOf(item)
+  for (const door of room.doors) {
+    if (door.swing === 'out') continue
+    const { hx, hy, r, leafDir } = doorSwing(room, door)
+    for (let deg = 0; deg <= 90; deg += 5) {
+      const [dx, dy] = leafDir(deg)
+      for (let f = 0; f <= 1.001; f += 0.1) {
+        const px = hx + dx * r * f, py = hy + dy * r * f
+        best = Math.min(best, Math.hypot(Math.max(b.x0 - px, 0, px - b.x1), Math.max(b.y0 - py, 0, py - b.y1)))
+      }
+    }
+  }
+  return best
+}
+
+/** Pairs of solid pieces that do not belong together and stand closer than MIN_GAP. */
+function tightPairs(solids: Item[]) {
+  const out: [Item, Item, number][] = []
+  for (let a = 0; a < solids.length; a++) {
+    for (let b = a + 1; b < solids.length; b++) {
+      if (areCompanions(solids[a], solids[b])) continue
+      const g = gap(solids[a], solids[b])
+      if (g < MIN_GAP) out.push([solids[a], solids[b], g])
+    }
+  }
+  return out
+}
+
+/** The description owns up to a tight fit instead of claiming nothing is in the way. */
+function expectHonest(items: Item[], layout: Layout) {
+  const solids = solidsOf(apply(items, layout))
+  const tight = tightPairs(solids)
+  if (!tight.length) return
+  expect(layout.description, `${layout.name} owns up to its tight fit`).toMatch(/Tight fit:/)
+  expect(layout.description, `${layout.name} does not claim nothing is in the way`).not.toMatch(/Nothing is in the way/)
 }
 
 /**
@@ -198,18 +239,50 @@ describe("(a) Forest's Room", () => {
     expect(layouts[0].description).toMatch(/drawers face the room|tall cabinet can open/)
   })
 
+  it('offers more than one arrangement, one of them the crib on the right wall by the window (the room as it is lived in)', () => {
+    const layouts = suggestLayouts(room, doc.items)
+    expect(layouts.length).toBeGreaterThanOrEqual(2)
+    const onRightWall = layouts.filter((l) => {
+      const c = crib(apply(doc.items, l))
+      const r = rectOf(c)
+      return r.x1 >= room.w - 0.5 && r.y0 <= 0.5 && c.rot === 90
+    })
+    expect(onRightWall.length, 'a layout with the crib along the right wall, up by the window wall').toBe(1)
+    // the room is too small for a walking gap everywhere: each layout says so rather than claiming a clear room
+    for (const l of layouts) expectHonest(doc.items, l)
+    expect(layouts[0].description).toMatch(/Tight fit: the /)
+  })
+
   it('keeps a locked crib exactly where it is and arranges around it', () => {
     const items = doc.items.map((i) => (i.id === 'forest-crib' ? { ...i, locked: true } : i))
     const original = crib(items)
     const { layouts, ms } = timed(() => suggestLayouts(room, items))
     expect(ms).toBeLessThan(400)
     expectForest(items, layouts)
+    expect(layouts.length).toBeGreaterThanOrEqual(2)
     for (const l of layouts) {
       expect(l.placements['forest-crib']).toEqual({ x: original.x, y: original.y, rot: original.rot, inRoom: true })
       expect(l.description).toMatch(/Crib stays where you locked it/)
       // nothing stands in the crib's open side either
       const solids = solidsOf(apply(items, l))
       expect(usableSides(room, crib(solids), solids)).toBeGreaterThanOrEqual(1)
+      // whatever has to be squeezed in this room, it is not squeezed against the crib: a full walking gap all round
+      for (const o of solids) {
+        if (o.id === 'forest-crib' || areCompanions(o, crib(solids))) continue
+        expect(gap(o, crib(solids)), `${o.id} keeps ${MIN_GAP} cm from the crib in ${l.name}`).toBeGreaterThanOrEqual(MIN_GAP)
+      }
+      expectHonest(items, l)
+    }
+  })
+
+  it('keeps the lock through a save, share link or import (migrateDoc keeps the flag)', () => {
+    const items = doc.items.map((i) => (i.id === 'forest-crib' ? { ...i, locked: true } : i))
+    const shared = migrateDoc(JSON.parse(JSON.stringify({ ...doc, items })))!
+    expect(shared.items.find((i) => i.id === 'forest-crib')?.locked).toBe(true)
+    const layouts = suggestLayouts(shared.room, shared.items)
+    for (const l of layouts) {
+      expect(l.placements['forest-crib']).toEqual({ x: crib(items).x, y: crib(items).y, rot: crib(items).rot, inRoom: true })
+      expect(l.description).toMatch(/Crib stays where you locked it/)
     }
   })
 
@@ -263,6 +336,18 @@ describe('(b) a fresh 305 × 366 room with the starter basics plus a nightstand,
         expect(blockedAccessStrips(it, solids), `${id}'s front is open in ${l.name}`).toEqual([])
       }
       expectSpaced(solids, l.name)
+      // a bed beside the door swing has the sweep as its way in and out: the bed keeps a walking gap from the leaf
+      expect(doorSwingDistance(room, bed), `bed clear of the door swing in ${l.name}`).toBeGreaterThanOrEqual(MIN_GAP)
+    }
+    // the recommended layout is one a person would pick: the bed on a side wall, not squeezed beside the door
+    expect(layouts[0].name).toMatch(/^A · Bed against the (left|right) wall/)
+  })
+
+  it('does not score layouts by how much furniture gathers round the bed', () => {
+    for (const l of suggestLayouts(room, items)) {
+      const { parts } = explainScore(room, apply(items, l))
+      // a "passage ok" line only exists for pieces within 120 cm of the bed, so it must not be worth points
+      expect(parts.filter((p) => /Passage between/.test(p) && /\+1$/.test(p)), `no passage bonus in ${l.name}`).toEqual([])
     }
   })
 })

@@ -88,6 +88,7 @@ function SelectionCard({ id }: { id: string }) {
   const updateItem = useStore((s) => s.updateItem)
   const removeItem = useStore((s) => s.removeItem)
   const toggleInRoom = useStore((s) => s.toggleInRoom)
+  const toggleLock = useStore((s) => s.toggleLock)
   const unit = useUnits((s) => s.unit)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const r = rectOf(item)
@@ -126,7 +127,11 @@ function SelectionCard({ id }: { id: string }) {
       ) : (
         <p className="muted small">This item is out of the room.</p>
       )}
+      {item.locked && <p className="muted small">Locked: it stays put, and suggestions arrange the rest of the room around it.</p>}
       <div className="row">
+        <button className={`chip ${item.locked ? 'solid' : 'ghost'}`} onClick={() => toggleLock(item.id)} title={item.locked ? 'Unlock: let it move again' : 'Lock it where it is: no dragging, no turning, and suggestions keep it there'}>
+          {item.locked ? 'Unlock' : 'Lock in place'}
+        </button>
         <button className="chip ghost" onClick={() => toggleInRoom(item.id)}>
           {item.inRoom ? 'Take out of the room' : 'Put back in the room'}
         </button>
