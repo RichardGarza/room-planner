@@ -1,7 +1,7 @@
 {
   "name": "room-planner",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,17 +9,24 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
     "@react-three/fiber": "^9.8.1",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-fs": "^2.5.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.186.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
