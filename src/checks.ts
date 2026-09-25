@@ -1,4 +1,4 @@
-import { closetClearance, closetLabel, doorClearanceFor, doorwayRect, gapBetween, intersects, isRugKind, overlapArea, rectOf, wallStripRect } from './geometry'
+import { closetClearance, closetLabel, doorClearanceFor, doorwayRect, gapBetween, isRugKind, itemsIntersect, overlapArea, polygonIntersectsRect, polygonOf, rectOf, wallStripRect } from './geometry'
 import type { Check, Item, Rect, Room, Wall } from './types'
 
 const MIN_PASSAGE = 60
@@ -61,10 +61,9 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     .filter((i) => i.kind === 'bed' && Math.min(i.w, i.d) >= 85)
     .sort((a, b) => b.w * b.d - a.w * a.d)[0]
 
-  // 1. Items poking through walls
+  // 1. Items poking through walls (the turned corners, so an angled piece is judged by its real outline)
   for (const it of inRoom) {
-    const r = rectOf(it)
-    if (r.x0 < -0.5 || r.y0 < -0.5 || r.x1 > room.w + 0.5 || r.y1 > room.d + 0.5) {
+    if (polygonOf(it).some(([x, y]) => x < -0.5 || y < -0.5 || x > room.w + 0.5 || y > room.d + 0.5)) {
       checks.push({ level: 'bad', text: `${it.name} goes through a wall`, itemIds: [it.id] })
     }
   }
@@ -74,7 +73,7 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     for (let b = a + 1; b < solid.length; b++) {
       const A = solid[a], B = solid[b]
       if (tucksUnder(A, B) || tucksUnder(B, A)) continue
-      if (intersects(rectOf(A), rectOf(B))) {
+      if (itemsIntersect(A, B)) {
         const bedItem = A.kind === 'bed' ? A : B.kind === 'bed' ? B : null
         const other = bedItem ? (A === bedItem ? B : A) : null
         const text =
@@ -116,6 +115,7 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     const label = nameOf('radiator', i, room.radiators.length)
     const rad = wallStripRect(room, radiator.wall, radiator.offset, radiator.width, radiator.depth + 15)
     for (const it of solid) {
+      if (!polygonIntersectsRect(polygonOf(it), rad, 0)) continue
       const area = overlapArea(rectOf(it), rad)
       if (area > 0) {
         const frac = area / (radiator.width * (radiator.depth + 15))
@@ -141,7 +141,7 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
       }
     } else {
       const strip = doorwayRect(room, door, DOORWAY_DEPTH)
-      const blockers = solid.filter((it) => intersects(rectOf(it), strip))
+      const blockers = solid.filter((it) => polygonIntersectsRect(polygonOf(it), strip))
       for (const it of blockers) {
         checks.push({ level: 'bad', text: `${it.name} blocks the doorway${several ? ` of ${label}` : ''}`, itemIds: [it.id] })
       }
@@ -182,7 +182,7 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
             ? { x0: br.x0 - BED_EXIT, y0: br.y0 + t - 5, x1: br.x0, y1: br.y0 + t + 5 }
             : { x0: br.x1, y0: br.y0 + t - 5, x1: br.x1 + BED_EXIT, y1: br.y0 + t + 5 }
         if (strip.x0 < 0 || strip.x1 > room.w || strip.y0 < 0 || strip.y1 > room.d) continue
-        if (!solid.some((o) => o !== bed && intersects(rectOf(o), strip))) clear++
+        if (!solid.some((o) => o !== bed && polygonIntersectsRect(polygonOf(o), strip))) clear++
       }
       return clear / steps
     }
@@ -198,7 +198,7 @@ export function runChecks(room: Room, items: Item[], opts: CheckOptions = {}): C
     const label = closetLabel(i, closets.length)
     const clear = closetClearance(room, closet)
     for (const it of solid) {
-      if (intersects(rectOf(it), clear.rect)) checks.push({ level: clear.level, text: clear.text(it.name, label), itemIds: [it.id] })
+      if (polygonIntersectsRect(polygonOf(it), clear.rect)) checks.push({ level: clear.level, text: clear.text(it.name, label), itemIds: [it.id] })
     }
   })
 

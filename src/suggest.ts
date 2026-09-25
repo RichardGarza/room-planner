@@ -1,5 +1,5 @@
 import { runChecks } from './checks'
-import { closetClearance, doorSwing, footprint, gapBetween, intersects, isRugKind, rectOf, wallLength, wallStripRect } from './geometry'
+import { closetClearance, doorSwing, footprint, gapBetween, intersects, isRugKind, rectOf, snap90, wallLength, wallStripRect } from './geometry'
 import type { Check, Item, ItemKind, ItemPlacement, Layout, Rect, Room, Rot, Wall } from './types'
 
 /**
@@ -38,9 +38,10 @@ const LETTERS = 'ABCDEFGH'
 const WALLS: Wall[] = ['top', 'left', 'right', 'bottom']
 /** Rotation that turns an item's back (its −d side, the headboard of a bed) to a wall. */
 const BACK_TO_WALL: Record<Wall, Rot> = { top: 0, right: 90, bottom: 180, left: 270 }
-const HEAD_WALL: Record<Rot, Wall> = { 0: 'top', 90: 'right', 180: 'bottom', 270: 'left' }
+/** Suggestions only turn things by quarter turns; an item saved at any other angle counts as the nearest one. */
+const HEAD_WALL: Record<0 | 90 | 180 | 270, Wall> = { 0: 'top', 90: 'right', 180: 'bottom', 270: 'left' }
 /** Unit vector an item's front faces at each rotation. */
-const FRONT: Record<Rot, [number, number]> = { 0: [0, 1], 90: [-1, 0], 180: [0, -1], 270: [1, 0] }
+const FRONT: Record<0 | 90 | 180 | 270, [number, number]> = { 0: [0, 1], 90: [-1, 0], 180: [0, -1], 270: [1, 0] }
 const WALL_NAME: Record<Wall, string> = { top: 'back wall', bottom: 'front wall', left: 'left wall', right: 'right wall' }
 const KIND_LABEL: Record<ItemKind, string> = {
   bed: 'bed', chair: 'chair', desk: 'desk', shelf: 'shelf', dresser: 'dresser', wardrobe: 'wardrobe', bookcase: 'bookcase',
@@ -140,7 +141,7 @@ function rectDistance(a: Rect, b: Rect) {
 
 /** Rect of `depth` cm in front of an item standing at `spot`. */
 function frontZone(item: Pick<Item, 'w' | 'd'>, spot: Spot, depth: number): Rect {
-  const [nx, ny] = FRONT[spot.rot]
+  const [nx, ny] = FRONT[snap90(spot.rot)]
   const dist = item.d / 2 + depth / 2
   const cx = spot.x + nx * dist, cy = spot.y + ny * dist
   const across = item.w
@@ -420,14 +421,14 @@ function commit(arr: Arrangement, item: Item, spot: Spot) {
 function bedZones(bed: Item, spot: Spot, wantNightstands: boolean): Zone[] {
   const r = spotRect(bed, spot)
   const zones: Zone[] = []
-  const alongY = spot.rot === 0 || spot.rot === 180
+  const alongY = snap90(spot.rot) === 0 || snap90(spot.rot) === 180
   const sideA: Rect = alongY ? { x0: r.x0 - PATH, y0: r.y0, x1: r.x0, y1: r.y1 } : { x0: r.x0, y0: r.y0 - PATH, x1: r.x1, y1: r.y0 }
   const sideB: Rect = alongY ? { x0: r.x1, y0: r.y0, x1: r.x1 + PATH, y1: r.y1 } : { x0: r.x0, y0: r.y1, x1: r.x1, y1: r.y1 + PATH }
   zones.push({ rect: sideA, penalty: -4, allow: ['nightstand'] }, { rect: sideB, penalty: -4, allow: ['nightstand'] })
   zones.push({ rect: frontZone(bed, spot, 50), penalty: -2 })
   if (wantNightstands) {
     // 50 cm beside each end of the headboard, against the same wall
-    const head = HEAD_WALL[spot.rot]
+    const head = HEAD_WALL[snap90(spot.rot)]
     const depth = 45
     const slot = (side: -1 | 1): Rect => {
       switch (head) {
@@ -444,7 +445,7 @@ function bedZones(bed: Item, spot: Spot, wantNightstands: boolean): Zone[] {
 
 /** The two spots beside a bed's head for a nightstand, back to the same wall as the headboard. */
 function nightstandSpots(room: Room, bed: Item, ns: Item): Spot[] {
-  const head = HEAD_WALL[bed.rot]
+  const head = HEAD_WALL[snap90(bed.rot)]
   const b = footprint(bed)
   const n = footprint({ w: ns.w, d: ns.d, rot: bed.rot })
   const out: Spot[] = []
@@ -464,10 +465,10 @@ function nightstandSpots(room: Room, bed: Item, ns: Item): Spot[] {
 
 /** Where a chair goes to be tucked in front of a desk, facing it. */
 function chairSpot(desk: Item, chair: Item): Spot {
-  const [nx, ny] = FRONT[desk.rot]
+  const [nx, ny] = FRONT[snap90(desk.rot)]
   const tuck = Math.min(20, chair.d * 0.35)
   const dist = desk.d / 2 + chair.d / 2 - tuck
-  return { x: round(desk.x + nx * dist), y: round(desk.y + ny * dist), rot: ((desk.rot + 180) % 360) as Rot }
+  return { x: round(desk.x + nx * dist), y: round(desk.y + ny * dist), rot: (snap90(desk.rot) + 180) % 360 }
 }
 
 /** Best free spot for an item: along a wall if any wall spot is allowed, else on a coarse grid. */
@@ -569,7 +570,7 @@ function buildArrangement(ctx: Ctx, anchor: Item, anchorSpot: Spot, rest: Item[]
 /* ---------- scoring a whole arrangement ---------- */
 
 function headSide(ctx: Ctx, bed: Item): Scored['head'] {
-  const wall = HEAD_WALL[bed.rot]
+  const wall = HEAD_WALL[snap90(bed.rot)]
   const r = rectOf(bed)
   const corner = wallsTouched(ctx.room, r).find((w) => w !== wall)
   if (ctx.windows.some((w) => w.wall === wall && spanOverlap(spanOf(r, wall), w) >= 20)) return corner ? { wall, side: 'window', corner } : { wall, side: 'window' }
@@ -754,7 +755,7 @@ export function suggestLayouts(room: Room, items: Item[], opts: SuggestOptions =
       // a tall headboard under a window: also try it pulled a little off the wall, as people do
       const rect = spotRect(anchor, spot)
       if (ctx.windows.some((w) => w.wall === wall && anchor.h > w.sill && spanOverlap(spanOf(rect, wall), w) >= 20)) {
-        const [nx, ny] = FRONT[spot.rot]
+        const [nx, ny] = FRONT[snap90(spot.rot)]
         variants.push({ x: spot.x + nx * HEAD_INSET, y: spot.y + ny * HEAD_INSET, rot: spot.rot })
       }
       for (const v of variants) {

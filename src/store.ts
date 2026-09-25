@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
-import { CLOSET_HEIGHT, clamp, footprint, frontRecessPad, isRugKind, rectOf, wallLength } from './geometry'
+import { CLOSET_HEIGHT, clamp, footprint, frontRecessPad, isRugKind, normalizeRot, rectOf, wallLength } from './geometry'
 import { migrateRoom, nextOpeningId } from './migrate'
 import { suggestLayouts } from './suggest'
-import type { Closet, Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
+import type { Closet, Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Wall } from './types'
 
 export type ViewMode = 'outside' | 'walk'
 export type OutsideAngle = 'corner' | 'above' | 'window' | 'door'
@@ -56,7 +56,10 @@ interface State extends Settings {
   dragTo: (id: string, x: number, y: number) => void
   /** Push the current items onto the undo stack (call before a drag starts). */
   snapshot: () => void
-  rotateItem: (id: string, delta: 90 | -90 | 180) => void
+  /** Turns an item by any number of degrees (clockwise on the plan); the result is normalised to [0, 360). */
+  rotateItem: (id: string, delta: number) => void
+  /** Sets an item's angle outright (degrees, any value; normalised to [0, 360)). */
+  setRotation: (id: string, deg: number) => void
   resizeItem: (id: string, size: Partial<Pick<Item, 'w' | 'd' | 'h'>>) => void
   updateItem: (id: string, patch: Partial<Pick<Item, 'name' | 'color' | 'kind' | 'note'>>) => void
   /** Adds an item (at the given centre, else the room centre) and returns its id. */
@@ -366,11 +369,20 @@ export const useStore = create<State>((set, get) => ({
     set((s) => {
       const items = s.items.map((i) => {
         if (i.id !== id) return i
-        const rot = (((i.rot + delta) % 360) + 360) % 360 as Rot
-        const next = { ...i, rot }
+        const next = { ...i, rot: normalizeRot(i.rot + delta) }
         return { ...next, ...(i.inRoom ? clampToRoom(s.room, next, i.x, i.y) : {}) }
       })
       return { items, activeLayoutId: null, ...pushHistory(s) }
+    }),
+
+  setRotation: (id, deg) =>
+    set((s) => {
+      const items = s.items.map((i) => {
+        if (i.id !== id) return i
+        const next = { ...i, rot: normalizeRot(deg) }
+        return { ...next, ...(i.inRoom ? clampToRoom(s.room, next, i.x, i.y) : {}) }
+      })
+      return { items, activeLayoutId: null }
     }),
 
   resizeItem: (id, size) =>

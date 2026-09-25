@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultItems, defaultRoom, presetLayouts } from '../data'
-import { doorClearance, doorClearanceFor, doorSwing, doorwayRect, footprint, gapBetween, intersects, rectOf } from '../geometry'
+import { doorClearance, doorClearanceFor, doorSwing, doorwayRect, footprint, gapBetween, intersects, itemsIntersect, polygonOf, rectOf } from '../geometry'
 import { runChecks } from '../checks'
 import type { Door, Item, Room } from '../types'
 
@@ -14,6 +14,24 @@ describe('geometry', () => {
   it('swaps the footprint when rotated', () => {
     expect(footprint({ w: 100, d: 50, rot: 0 })).toEqual({ fw: 100, fd: 50 })
     expect(footprint({ w: 100, d: 50, rot: 90 })).toEqual({ fw: 50, fd: 100 })
+  })
+
+  it('gives the bounding box of a box turned to any angle', () => {
+    const { fw, fd } = footprint({ w: 100, d: 100, rot: 45 })
+    expect(fw).toBeCloseTo(100 * Math.SQRT2, 6)
+    expect(fd).toBeCloseTo(100 * Math.SQRT2, 6)
+    const poly = polygonOf(box({ w: 100, d: 100, x: 100, y: 100, rot: 45 }))
+    expect(poly).toHaveLength(4)
+    expect(poly[0][0]).toBeCloseTo(100, 6)
+    expect(poly[0][1]).toBeCloseTo(100 - 50 * Math.SQRT2, 6)
+  })
+
+  it('tests turned items by their outline, square ones by their box', () => {
+    const a = box({ w: 100, d: 100, x: 200, y: 200, rot: 45 })
+    const b = box({ id: 'b', w: 100, d: 100, x: 300, y: 300, rot: 45 })
+    expect(intersects(rectOf(a), rectOf(b))).toBe(true)
+    expect(itemsIntersect(a, b)).toBe(false)
+    expect(itemsIntersect(box({ x: 200, y: 200 }), box({ id: 'b', x: 230, y: 230 }))).toBe(true)
   })
 
   it('detects overlaps and gaps', () => {
