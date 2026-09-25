@@ -13,9 +13,13 @@ export function Sidebar() {
   const items = useStore((s) => s.items)
   const activeLayoutId = useStore((s) => s.activeLayoutId)
   const savedLayouts = useStore((s) => s.savedLayouts)
+  const suggestions = useStore((s) => s.suggestions)
   const selectedId = useStore((s) => s.selectedId)
   const checks = useMemo(() => runChecks(room, items), [room, items])
-  const layout = [...presetLayouts, ...savedLayouts].find((l) => l.id === activeLayoutId)
+  const layout = [...presetLayouts, ...suggestions, ...savedLayouts].find((l) => l.id === activeLayoutId)
+  const isSuggestion = !!layout && suggestions.includes(layout)
+  const isSaved = !!layout && savedLayouts.includes(layout)
+  const title = !layout ? 'Your version' : isSuggestion ? `Suggestion ${layout.name}` : isSaved ? `Your layout · ${layout.name}` : layout.name
   const selected = items.find((i) => i.id === selectedId)
   const problems = checks.filter((c) => c.level !== 'ok')
   const good = checks.filter((c) => c.level === 'ok')
@@ -24,9 +28,10 @@ export function Sidebar() {
     <aside className="sidebar">
       <section className="card">
         <h4>Layout</h4>
-        <h3>{layout ? layout.name : 'Your version'}</h3>
+        <h3>{title}</h3>
         <p className="muted">{layout ? layout.description : 'You have moved things around. Save it below to keep it.'}</p>
         {!layout && <p className="pink small">✎ Changed. This is your own version.</p>}
+        {suggestions.length > 0 && <p className="muted small suggest-note">Scored by the checks below — the recommended one had the fewest problems.</p>}
         <ul className="notes">
           {good.map((c, i) => <CheckLine key={i} c={c} />)}
         </ul>

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { defaultItems, defaultRoom, presetLayouts } from './data'
 import { clamp, footprint, wallLength } from './geometry'
 import { migrateRoom, nextOpeningId } from './migrate'
+import { suggestLayouts } from './suggest'
 import type { Door, Item, ItemPlacement, Layout, Opening, Radiator, Room, RoomDoc, Rot, Wall } from './types'
 
 export type ViewMode = 'outside' | 'walk'
@@ -39,6 +40,10 @@ interface State extends Settings {
   selectedId: string | null
   activeLayoutId: string | null
   savedLayouts: Layout[]
+  /** "try this" arrangements from src/suggest.ts, made on demand */
+  suggestions: Layout[]
+  /** the furniture or room changed since the suggestions were made */
+  suggestionsStale: boolean
   view: ViewMode
   outsideAngle: OutsideAngle
   walkPose: WalkPose
@@ -66,6 +71,8 @@ interface State extends Settings {
   applyLayout: (layout: Layout) => void
   saveLayout: (name: string) => void
   deleteLayout: (id: string) => void
+  /** Work out a few good arrangements of the current furniture and keep them as suggestions. */
+  generateSuggestions: () => void
   undo: () => void
   redo: () => void
   setView: (v: ViewMode) => void
@@ -239,6 +246,8 @@ export const useStore = create<State>((set, get) => ({
   selectedId: null,
   activeLayoutId: init.layoutId,
   savedLayouts: [],
+  suggestions: [],
+  suggestionsStale: false,
   view: 'outside',
   outsideAngle: 'corner',
   walkPose: walkStart(init.room, 'door'),
@@ -293,7 +302,7 @@ export const useStore = create<State>((set, get) => ({
         const next = { ...i, ...size }
         return { ...next, ...(i.inRoom ? clampToRoom(s.room, next, i.x, i.y) : {}) }
       })
-      return { items, activeLayoutId: null, ...pushHistory(s) }
+      return { items, activeLayoutId: null, suggestionsStale: true, ...pushHistory(s) }
     }),
 
   updateItem: (id, patch) =>
@@ -317,13 +326,13 @@ export const useStore = create<State>((set, get) => ({
         note: spec.note,
       }
       const placed = { ...item, ...clampToRoom(s.room, item, item.x, item.y) }
-      return { items: [...s.items, placed], selectedId: id, activeLayoutId: null, ...pushHistory(s) }
+      return { items: [...s.items, placed], selectedId: id, activeLayoutId: null, suggestionsStale: true, ...pushHistory(s) }
     })
     return id
   },
 
   removeItem: (id) =>
-    set((s) => ({ items: s.items.filter((i) => i.id !== id), selectedId: s.selectedId === id ? null : s.selectedId, activeLayoutId: null, ...pushHistory(s) })),
+    set((s) => ({ items: s.items.filter((i) => i.id !== id), selectedId: s.selectedId === id ? null : s.selectedId, activeLayoutId: null, suggestionsStale: true, ...pushHistory(s) })),
 
   toggleInRoom: (id) =>
     set((s) => {
@@ -333,13 +342,13 @@ export const useStore = create<State>((set, get) => ({
         const next = { ...i, inRoom }
         return inRoom ? { ...next, ...clampToRoom(s.room, next, i.x, Math.min(i.y, s.room.d)) } : next
       })
-      return { items: park(s.room, items), activeLayoutId: null, ...pushHistory(s) }
+      return { items: park(s.room, items), activeLayoutId: null, suggestionsStale: true, ...pushHistory(s) }
     }),
 
   setRoom: (patch) =>
     set((s) => {
       const room = sanitizeRoom({ ...s.room, ...patch })
-      return { room, items: fitAll(room, s.items), activeLayoutId: null, walkPose: walkStart(room, 'door') }
+      return { room, items: fitAll(room, s.items), activeLayoutId: null, suggestionsStale: true, walkPose: walkStart(room, 'door') }
     }),
 
   addOpening: (kind) => {
@@ -393,6 +402,9 @@ export const useStore = create<State>((set, get) => ({
       return { savedLayouts, activeLayoutId: s.activeLayoutId === id ? null : s.activeLayoutId }
     }),
 
+  generateSuggestions: () =>
+    set((s) => ({ suggestions: suggestLayouts(s.room, s.items), suggestionsStale: false })),
+
   undo: () =>
     set((s) => {
       const prev = s.history[s.history.length - 1]
@@ -437,6 +449,8 @@ export const useStore = create<State>((set, get) => ({
       room,
       items,
       savedLayouts: doc.layouts ?? [],
+      suggestions: [],
+      suggestionsStale: false,
       ...doc.settings,
       selectedId: null,
       activeLayoutId: preset?.id ?? null,
